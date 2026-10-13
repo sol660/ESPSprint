@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(~/.platformio/penv/Scripts/pio.exe run -e:*)",
+      "Bash(~/.platformio/penv/Scripts/pio.exe device list:*)",
+      "Bash(~/.platformio/penv/Scripts/pio.exe pkg search:*)",
+      "Bash(~/.platformio/penv/Scripts/python.exe .claude/skills/pio-monitor/capture.py:*)"
+    ]
+  }
+}
