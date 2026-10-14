@@ -15,6 +15,8 @@ lib/<ModuleName>/
 
 ## Conventions
 
+- Decision logic (what to measure, level, upload, when to wake) belongs in `lib/WakeCycle/` behind the ports in `Ports.h`, not in a module like this, so it can be tested on the PC. Hardware modules here implement a port (see `lib/Esp32Ports/`).
+
 - A class with `begin()` (called from `setup()`, returns `bool` success) and `update()` (called every `loop()`, must be **non-blocking** — no `delay()`, use `millis()` timing).
 - Pins and tunables come in through the constructor or from `include/config.h`; no magic numbers in the module.
 - Log with the Arduino-ESP32 log macros so verbosity follows `CORE_DEBUG_LEVEL`:

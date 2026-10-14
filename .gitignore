@@ -71,3 +71,6 @@ Testing/
 .pio/
 .vscode/.browse.c_cpp.db*
 .vscode/ipch
+
+# Real credentials (template: include/secrets.example.h)
+include/secrets.h
