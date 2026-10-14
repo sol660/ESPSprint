@@ -22,6 +22,7 @@ The product is a remote landslide/tilt monitor (school prototype). The full spec
 - `lib/Esp32Ports/` — the real port implementations. `src/main.cpp` builds them, runs one cycle and sleeps as the result says.
 - `include/config.h` — all pins and tunables (`config::`), Arduino-free. Secrets go in the git-ignored `include/secrets.h`; copy it from `include/secrets.example.h`.
 - `test/native/test_<name>/` — PC tests at the wake-cycle seam, using the fakes in `test/native/fakes/Fakes.h`. `test/embedded/test_<name>/` — on-board tests of the real ports.
+- `docs/improvements.md` — log of changes, decisions, open questions and items still to verify on the board. Add to it when you finish a ticket.
 - `.pio/` — generated build output; never edit.
 
 ## Rules

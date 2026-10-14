@@ -22,6 +22,11 @@ constexpr uint8_t PIN_I2C_SCL = 22;
 constexpr uint8_t PIN_MPU_INT = 34;   // jumpered from MPU6050 INT (H2 pin 12)
 constexpr uint8_t PIN_CAM_WAKE = 19;  // to ESP32-CAM GPIO13
 
+// MPU6050
+constexpr uint8_t MPU_I2C_ADDR = 0x68;  // AD0 low
+constexpr uint32_t I2C_CLOCK_HZ = 400000;
+constexpr uint16_t IMU_SAMPLE_RATE_HZ = 100;  // readSample() is paced to this
+
 // Wake schedule
 constexpr uint32_t NORMAL_INTERVAL_S = 15 * 60;
 constexpr uint32_t EVENT_INTERVAL_S = 60;        // reading cadence in event mode
@@ -43,9 +48,14 @@ constexpr float LEVEL_DROP_MARGIN_DEG = 0.1f;
 
 // Measurement
 constexpr float STILL_ACCEL_STD_G = 0.003f;  // motion gate, tune on the bench
-constexpr float STILL_GYRO_DPS = 1.0f;
+constexpr float STILL_GYRO_DPS = 1.0f;  // std dev within a window, so the zero-rate offset doesn't count
+constexpr uint16_t WINDOW_SAMPLES = 50;  // samples per motion-gate window (Not set by spec: tune.)
 constexpr uint8_t WINDOWS_PER_READING = 5;
 constexpr uint32_t READING_TIME_LIMIT_MS = 10 * 1000;
+// Baseline: a long average, captured on first boot or by the `baseline` command.
+// (Not set by spec: tune. Must fit inside the watchdog with a reading.)
+constexpr uint8_t BASELINE_WINDOWS = 20;
+constexpr uint32_t BASELINE_TIME_LIMIT_MS = 25 * 1000;
 constexpr float MOTION_WAKE_THRESHOLD_G = 0.1f;
 
 // Shock photos are rate-limited so a windy night can't drain the battery.

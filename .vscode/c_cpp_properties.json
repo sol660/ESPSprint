@@ -8,8 +8,10 @@
         {
             "name": "PlatformIO",
             "includePath": [
-                "D:/esp/ESPSprint/include",
                 "D:/esp/ESPSprint/src",
+                "D:/esp/ESPSprint/lib/Esp32Ports/src",
+                "D:/esp/ESPSprint/lib/WakeCycle/src",
+                "D:/esp/ESPSprint/include",
                 "C:/Users/minsh/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/newlib/platform_include",
                 "C:/Users/minsh/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/freertos/include",
                 "C:/Users/minsh/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/freertos/include/esp_additions/freertos",
@@ -206,6 +208,7 @@
                 "C:/Users/minsh/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/dio_qspi/include",
                 "C:/Users/minsh/.platformio/packages/framework-arduinoespressif32/cores/esp32",
                 "C:/Users/minsh/.platformio/packages/framework-arduinoespressif32/variants/esp32",
+                "D:/esp/ESPSprint/.pio/libdeps/esp32dev/Unity/src",
                 "C:/Users/minsh/.platformio/packages/framework-arduinoespressif32/libraries/ArduinoOTA/src",
                 "C:/Users/minsh/.platformio/packages/framework-arduinoespressif32/libraries/AsyncUDP/src",
                 "C:/Users/minsh/.platformio/packages/framework-arduinoespressif32/libraries/BLE/src",
@@ -244,8 +247,10 @@
             "browse": {
                 "limitSymbolsToIncludedHeaders": true,
                 "path": [
-                    "D:/esp/ESPSprint/include",
                     "D:/esp/ESPSprint/src",
+                    "D:/esp/ESPSprint/lib/Esp32Ports/src",
+                    "D:/esp/ESPSprint/lib/WakeCycle/src",
+                    "D:/esp/ESPSprint/include",
                     "C:/Users/minsh/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/newlib/platform_include",
                     "C:/Users/minsh/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/freertos/include",
                     "C:/Users/minsh/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/freertos/include/esp_additions/freertos",
@@ -442,6 +447,7 @@
                     "C:/Users/minsh/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/dio_qspi/include",
                     "C:/Users/minsh/.platformio/packages/framework-arduinoespressif32/cores/esp32",
                     "C:/Users/minsh/.platformio/packages/framework-arduinoespressif32/variants/esp32",
+                    "D:/esp/ESPSprint/.pio/libdeps/esp32dev/Unity/src",
                     "C:/Users/minsh/.platformio/packages/framework-arduinoespressif32/libraries/ArduinoOTA/src",
                     "C:/Users/minsh/.platformio/packages/framework-arduinoespressif32/libraries/AsyncUDP/src",
                     "C:/Users/minsh/.platformio/packages/framework-arduinoespressif32/libraries/BLE/src",
@@ -496,6 +502,7 @@
                 "ARDUINO_VARIANT=\"esp32\"",
                 "ARDUINO_BOARD=\"Espressif ESP32 Dev Module\"",
                 "ARDUINO_PARTITION_default",
+                "UNITY_INCLUDE_CONFIG_H",
                 ""
             ],
             "cStandard": "gnu99",

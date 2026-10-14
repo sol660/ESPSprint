@@ -10,10 +10,15 @@
 
 class Esp32Imu : public Imu {
  public:
+  // Wakes the MPU6050 and sets +/-2 g, lowest DLPF, IMU_SAMPLE_RATE_HZ. False if it doesn't answer.
+  bool begin();
   bool readSample(ImuSample& out) override;
   bool readTemperatureC(float& out) override;
   bool setMotionThreshold(float g) override;
   bool resetBus() override;
+
+ private:
+  uint32_t lastSampleUs_ = 0;
 };
 
 class Esp32Clock : public Clock {
@@ -26,6 +31,7 @@ class Esp32Clock : public Clock {
 
 class Esp32Store : public Store {
  public:
+  explicit Esp32Store(const char* ns = "espsprint") : ns_(ns) {}
   bool loadBaseline(Baseline& out) override;
   bool saveBaseline(const Baseline& b) override;
   bool loadCalibration(TempCalibration& out) override;
@@ -36,6 +42,9 @@ class Esp32Store : public Store {
   bool loadPendingAlert(Alert& out) override;
   bool savePendingAlert(const Alert& a) override;
   void clearPendingAlert() override;
+
+ private:
+  const char* ns_;  // Preferences (NVS) namespace
 };
 
 class Esp32Uplink : public Uplink {
