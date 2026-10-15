@@ -13,6 +13,7 @@ The product is a remote landslide/tilt monitor (school prototype). The full spec
 - PlatformIO CLI is **not on PATH**: use `~/.platformio/penv/Scripts/pio.exe` (Python: `~/.platformio/penv/Scripts/python.exe`).
 - Build: `pio run -e esp32dev` · Flash: `pio run -t upload` · Monitor: `pio device monitor` (115200 baud)
 - PC logic tests: `pio test -e native` (one suite: `-f native/test_<name>`). On-board hardware tests: `pio test -e esp32dev` (flashes the board).
+- Board tests (pytest, from the PC, ADR 0001): run `~/.platformio/penv/Scripts/python.exe scripts/setup_venv.py` once to set up `.venv`. Then the board suite is `.venv/Scripts/python.exe -m pytest test/hil/board` (port is found automatically, or set `ESP_PORT`; `--manual` also runs the hand tests), and the no-board harness self-check is `.venv/Scripts/python.exe -m pytest test/hil/selfcheck`. Firmware replies that tests check are tagged lines: `@tag key=value ...`.
 - The `native` env needs a complete MinGW gcc. The `gcc.exe` in `~/bin` (first on PATH) has no headers, so `scripts/native_toolchain.py` puts `~/tdm-gcc/bin` first (override with `NATIVE_GCC_BIN`).
 - Project skills in `.claude/skills/`: `pio-build`, `pio-flash` (user-invoked only), `pio-monitor`, `pio-add-lib`, `pio-test`, `esp32-module`.
 

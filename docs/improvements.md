@@ -22,6 +22,27 @@ These need a decision from the installer.
 
 - [ ] `pio test -e esp32dev`, with the MPU6050 wired and the board resting flat. This runs `embedded/test_imu` and `embedded/test_store_reboot`. Both compile but haven't run yet.
 - [ ] #3 manual check: flash, type `read`, tilt the board by hand, then put it back. The delta should move in the expected direction and return to about 0°. Also check which way is "positive" pitch and roll on the real mounting.
+- [ ] #16 hello test: flash, then `.venv/Scripts/python.exe -m pytest test/hil/board`. `@boot` should arrive within 5 s with the right `fw`, and `ping` should get its `@pong`. Also confirm the DTR/RTS reset works on this DevKit (no need to press EN).
+
+## 2026-10-16: #16 Board test platform: tagged replies, boot banner, ping, PC harness
+
+- **Firmware:** `startBoot()` in the wake-cycle core counts boots in RTC state. `setup()` prints `@boot fw=<ver> boot=<n> cause=<PowerOn|Timer|Motion|Serial>` straight after `Serial.begin()`, before the IMU and the wake cycle. `ping <n>` replies `@pong <n>`. The serial reader now keeps spaces inside a line, so commands can take an argument. It still trims leading and trailing spaces.
+- **PC test:** `native/test_boot` checks boot counting and the cause names.
+- **Python environment:** run `~/.platformio/penv/Scripts/python.exe scripts/setup_venv.py` once. It builds a git-ignored `.venv` from PlatformIO's Python and installs `test/hil/requirements.txt` (pytest, pyserial).
+- **Harness (`test/hil/harness.py`):**
+  - finds the port by USB chip (CP210x, CH340, CH9102, FT232R), or uses `ESP_PORT` if it's set
+  - FAILS with the list of ports it checked when there's no board, or asks for `ESP_PORT` when there are two
+  - resets the board through RTS/DTR, and clears serial input while EN is held low
+  - parses `@tag key=value` lines and ignores all other lines
+  - `manual` tests are skipped unless `--manual` is given
+- **Suites:** `test/hil/board` needs the board. `test/hil/selfcheck` runs with no board. Among other things, the self-check runs the real hello test against:
+  - a silent fake port, which must FAIL
+  - stale `@boot` text from before the reset, which must FAIL
+  - a wrong firmware version, which must FAIL
+  - a fake firmware that answers correctly, which must pass (the positive control)
+- `platformio.ini` gains `test_ignore = hil/*`, so `pio test` never treats the pytest folder as a suite.
+- **Decision:** `ping` stays in `main.cpp` and doesn't go through `runCommand()`. It's a pure echo with no decision logic, and adding an argument to `Command` would change the `runCommand()` signature that the existing tests use.
+- **Note:** the first wake cycle runs before `loop()` reads commands. On a board with no stored baseline, that can take up to 35 s, so the hello test waits up to 45 s for `@pong`. #17's command window will change this.
 
 ## 2026-10-16: Scope narrowed and board test platform planned (spec #14)
 
