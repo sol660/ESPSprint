@@ -18,7 +18,7 @@ The product is a remote landslide/tilt monitor (school prototype). The full spec
 
 ## Layout
 
-- Firmware is one **wake cycle** per boot. `lib/WakeCycle/` holds `runWakeCycle()`, which has no hardware access: it gets the wake cause, `RtcState` (kept across deep sleep), `CycleConfig`, and six ports (`Ports.h`: Imu, Clock, Store, Uplink, CamTrigger, Sleeper). It returns a `WakeResult`. All decision logic belongs here, and it must not include Arduino headers.
+- Firmware is one **wake cycle** per boot. `lib/WakeCycle/` holds `runWakeCycle()`, which has no hardware access: it gets the wake cause, `RtcState` (kept across deep sleep), `CycleConfig`, and six ports (`Ports.h`: Imu, Clock, Store, Uplink, CamTrigger, Sleeper). It returns a `WakeResult`. All decision logic belongs here, and it must not include Arduino headers. Installer serial commands (`read`, `baseline`, `status`) go through the second entry point, `runCommand()`. `main.cpp`'s `loop()` only parses the command and prints the result.
 - `lib/Esp32Ports/` — the real port implementations. `src/main.cpp` builds them, runs one cycle and sleeps as the result says.
 - `include/config.h` — all pins and tunables (`config::`), Arduino-free. Secrets go in the git-ignored `include/secrets.h`; copy it from `include/secrets.example.h`.
 - `test/native/test_<name>/` — PC tests at the wake-cycle seam, using the fakes in `test/native/fakes/Fakes.h`. `test/embedded/test_<name>/` — on-board tests of the real ports.

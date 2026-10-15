@@ -6,7 +6,6 @@ A running log of what changed, the decisions made along the way, and what's stil
 
 These need a decision from the installer.
 
-- **WiFi network count.** Spec #1 says both "up to 2 networks tried" and lists three networks (home, school, phone hotspot). `config::WIFI_MAX_NETWORKS = 2`, but `include/secrets.example.h` lists 3, so the hotspot would never be tried. Should it be 3?
 - **Timezone.** `config::TIMEZONE` is `"UTC0"`, so the photo slots (07:00, 12:00 …) would fire at UTC times. Set it to the site's POSIX TZ string.
 - **Values the spec doesn't set** (placeholders in `include/config.h`, marked "Not set by spec"):
 
@@ -14,7 +13,6 @@ These need a decision from the installer.
   |---|---|
   | `SHOCK_PHOTO_MIN_GAP_S` | 30 min |
   | `CAM_PULSE_MS` | 50 ms |
-  | `SERIAL_SESSION_IDLE_MS` | 60 s |
   | `WINDOW_SAMPLES` | 50 |
   | `BASELINE_WINDOWS` | 20 |
   | `BASELINE_TIME_LIMIT_MS` | 25 s |
@@ -24,6 +22,42 @@ These need a decision from the installer.
 
 - [ ] `pio test -e esp32dev`, with the MPU6050 wired and the board resting flat. This runs `embedded/test_imu` and `embedded/test_store_reboot`. Both compile but haven't run yet.
 - [ ] #3 manual check: flash, type `read`, tilt the board by hand, then put it back. The delta should move in the expected direction and return to about 0°. Also check which way is "positive" pitch and roll on the real mounting.
+
+## 2026-10-16: Scope narrowed and board test platform planned (spec #14)
+
+Decided in a grilling session with the installer. Nothing is coded yet. The code changes listed here are still to do.
+
+**Core build:** read, sleep, upload, alert. Order:
+
+1. Platform work that doesn't need the board.
+2. Reading and deep sleep on the board.
+3. WiFi upload of every reading.
+4. Bare levels and ntfy alerts.
+
+**Test platform** ([ADR 0001](adr/0001-board-tests-from-the-pc-with-false-positive-guards.md)):
+- The main seam is now **the whole firmware over USB serial**, tested by pytest + pyserial on the PC.
+- The wake cycle on the PC (called "seam 1" in the #3 entry below) is now seam 2, and the on-board driver tests are seam 3.
+- Replies use `@tag key=value` lines.
+- No board means FAIL. Every reply must echo this run's random number. Upload and alert tests match this run's tagged record.
+- CI runs the PC tests and the firmware build.
+- Each feature gets one branch and pull request, and merges only when CI and the board suites pass.
+
+**Decisions:**
+
+- **Accuracy** ([ADR 0002](adr/0002-accept-0.5-degree-accuracy-before-calibration.md)): aim for 0.25° and accept 0.5° for now. No temperature compensation yet: the correction stays at zero, and raw values are still recorded. `WATCH_DEG` goes from 0.5° to **1.0°** until calibration.
+- **WiFi:** 2 networks (home, then school), **30 s each**. This closes the open question about 2 or 3 networks; the phone hotspot is dropped for now. `WIFI_MAX_NETWORKS` stays at 2, and `WIFI_CONNECT_TIMEOUT_S` goes from 20 to 30. The installer may swap in their own WiFi code later, behind `Uplink`.
+- **Command window:** after power-on or reset, the board listens for 60 s, then sleeps. Each command keeps it awake until 5 min after the last command (`SERIAL_SESSION_IDLE_MS` goes from 60 s to 5 min). Timer wakes don't listen.
+- **Test build:** an `esp32dev_hil` environment with short timings, so real deep sleep can be tested quickly.
+- **Uploads:** every reading is uploaded straight away. A failure is logged as `@upload ok=0` and the reading is lost. The offline buffer and hourly batching come later, as a simple buffer stage.
+- **Supabase:** no project exists yet. A schema file in the repo, with a nullable `test_tag` column and insert-only access for the device key, plus a setup checklist for a first-time user.
+- **Alerts:** a bare version of #8 (levels, margin, ntfy only when the level goes up, retry). Test alerts go to the real topic, with a "TEST — not a real alert" line. Event mode and the CAM pulse are deferred.
+- **Deferred:**
+  - temperature compensation (#11)
+  - the offline buffer and fault handling (#7)
+  - motion wake (#5)
+  - the dashboard (#9)
+  - the CAM (#10)
+  - the jig (#12), which becomes a few fixed 3D-printed angles after the main build
 
 ## 2026-10-14: #3 Tilt reading and baseline over serial (not yet committed)
 
