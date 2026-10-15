@@ -5,7 +5,9 @@ Tests depend only on tagged lines, `@tag key=value ...`. Every other line
 """
 
 import os
+import random
 import re
+import textwrap
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -85,6 +87,45 @@ class Board:
         seen = "\n".join(f"  | {line}" for line in self.recent) or "  (nothing at all)"
         pytest.fail(f"no {what or '@' + tag} within {timeout_s} s. Last lines seen:\n{seen}")
 
+    def sync(self, timeout_s):
+        """Pings with a fresh random number and waits for its pong.
+
+        Commands are handled one at a time, so every tagged line read after this
+        was printed after this point: earlier output can't answer a later command.
+        """
+        n = random_id()
+        self.send(f"ping {n}")
+        self.expect("pong", timeout_s, match=lambda t: t.args == [n], what=f"@pong {n}")
+
+    def ask(self, command, tag, timeout_s):
+        """Sends `command` after a sync, and returns its `@tag` reply."""
+        self.sync(timeout_s)
+        self.send(command)
+        return self.expect(tag, timeout_s, what=f"@{tag} in reply to `{command}`")
+
+
+def random_id():
+    """A random number unique to this run, for replies that must echo it."""
+    return str(random.SystemRandom().randrange(10**8, 10**9))
+
+
+class Installer:
+    """The person at the bench during a manual test (spec #14, story 14).
+
+    Each step prints clear instructions, then waits for Enter.
+    """
+
+    def __init__(self, ask=input, say=print):
+        self._ask = ask
+        self._say = say
+
+    def do(self, instructions):
+        self._say("\n=== MANUAL STEP ===\n" + textwrap.dedent(instructions).strip())
+        try:
+            self._ask("Press Enter when done (Ctrl+C aborts)... ")
+        except EOFError:
+            pytest.fail("manual test needs a terminal to wait for Enter, but stdin is closed")
+
 # USB-serial chips found on ESP32 DevKit boards: (vid, pid) -> name.
 ESP_USB_CHIPS = {
     (0x10C4, 0xEA60): "CP210x",
@@ -130,6 +171,15 @@ class Tagged:
     fields: dict = field(default_factory=dict)  # key=value pairs
     args: list = field(default_factory=list)    # bare values, in order
     line: str = ""
+
+    def number(self, key):
+        """The value of `key` as a float; fails the test if it's missing or not a number."""
+        if key not in self.fields:
+            pytest.fail(f"no {key}= in: {self.line}")
+        try:
+            return float(self.fields[key])
+        except ValueError:
+            pytest.fail(f"{key}= is not a number in: {self.line}")
 
 
 def parse_tag(line):

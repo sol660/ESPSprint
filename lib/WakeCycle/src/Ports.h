@@ -36,6 +36,7 @@ struct Reading {
   float pitchRaw, rollRaw;           // averaged angle before compensation
   float tempC;
   float noise;  // mean accelerometer std dev of the accepted windows, g
+  float accelG;  // magnitude of the averaged acceleration, g (about 1 at rest)
   bool stable;
   Level level;
   ReadingEvent event;

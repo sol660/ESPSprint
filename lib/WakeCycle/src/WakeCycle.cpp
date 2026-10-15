@@ -63,6 +63,7 @@ Reading measureTilt(const CycleConfig& cfg, uint8_t windows, uint32_t timeLimitM
   if (accepted > 0) {
     r.noise = static_cast<float>(noiseSum / accepted);
     const double x = sum[0], y = sum[1], z = sum[2];  // direction only, so no need to divide
+    r.accelG = static_cast<float>(std::sqrt(x * x + y * y + z * z) / accepted);
     r.pitchRaw = static_cast<float>(std::atan2(-x, std::sqrt(y * y + z * z))) * RAD_TO_DEG_F;
     r.rollRaw = static_cast<float>(std::atan2(y, z)) * RAD_TO_DEG_F;
   }
@@ -89,6 +90,8 @@ Reading readTiltDelta(const CycleConfig& cfg, Ports& ports, bool haveBaseline,
     r.pitchDeg = r.pitchRaw - baseline.pitchDeg;
     r.rollDeg = r.rollRaw - baseline.rollDeg;
   }
+  r.tiltDeg = std::sqrt(r.pitchDeg * r.pitchDeg + r.rollDeg * r.rollDeg);
+  if (!ports.imu.readTemperatureC(r.tempC)) r.tempC = NAN;
   return r;
 }
 

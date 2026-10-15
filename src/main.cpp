@@ -1,6 +1,7 @@
 #include <Arduino.h>
 
 #include "Esp32Ports.h"
+#include "TaggedReply.h"
 #include "WakeCycle.h"
 #include "config.h"
 
@@ -38,14 +39,23 @@ static void handleCommand(const char* line) {
   const CommandResult r = runCommand(cmd, rtcState, CycleConfig{}, hw.ports);
   if (!r.ok) {
     Serial.println("failed (unit moving, or flash write error)");
-    return;
-  }
-  if (r.hasBaseline) {
-    Serial.printf("baseline pitch %+.3f roll %+.3f deg\n", r.baseline.pitchDeg, r.baseline.rollDeg);
   } else {
-    Serial.println("no baseline stored");
+    if (r.hasBaseline) {
+      Serial.printf("baseline pitch %+.3f roll %+.3f deg\n", r.baseline.pitchDeg, r.baseline.rollDeg);
+    } else {
+      Serial.println("no baseline stored");
+    }
+    if (cmd != Command::Baseline) printReading(r.reading);
   }
-  if (cmd != Command::Baseline) printReading(r.reading);
+
+  // Tagged reply for board tests (ADR 0001): `read` -> @read, `baseline`/`status` -> @status.
+  char reply[200];
+  if (cmd == Command::Read) {
+    formatReadReply(r, reply, sizeof reply);
+  } else {
+    formatStatusReply(r, reply, sizeof reply);
+  }
+  Serial.println(reply);
 }
 
 void setup() {
