@@ -87,6 +87,25 @@ class Board:
         seen = "\n".join(f"  | {line}" for line in self.recent) or "  (nothing at all)"
         pytest.fail(f"no {what or '@' + tag} within {timeout_s} s. Last lines seen:\n{seen}")
 
+    def now(self):
+        """The harness clock in seconds, for timing what the board does."""
+        return self._clock()
+
+    def watch(self, duration_s):
+        """Reads for duration_s and returns every tagged line seen, in order."""
+        deadline = self._clock() + duration_s
+        seen = []
+        while self._clock() < deadline:
+            raw = self.port.readline()
+            if not raw:
+                continue
+            line = raw.decode("utf-8", errors="replace").strip()
+            self.recent.append(line)
+            t = parse_tag(line)
+            if t:
+                seen.append(t)
+        return seen
+
     def sync(self, timeout_s):
         """Pings with a fresh random number and waits for its pong.
 

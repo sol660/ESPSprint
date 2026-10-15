@@ -37,6 +37,28 @@ struct CycleConfig {
   uint32_t readingTimeLimitMs = config::READING_TIME_LIMIT_MS;
   uint8_t baselineWindows = config::BASELINE_WINDOWS;
   uint32_t baselineTimeLimitMs = config::BASELINE_TIME_LIMIT_MS;
+  uint32_t commandWindowMs = config::COMMAND_WINDOW_MS;
+  uint32_t sessionIdleMs = config::SERIAL_SESSION_IDLE_MS;
+};
+
+// When an awake board may go to sleep (spec #14 "Command window and sleep").
+// The serial adapter opens it once the boot's wake cycle is done, reports each
+// handled command, and polls sleepDue() with millis(). Times are millis()
+// values; wrap-around is handled.
+class CommandWindow {
+ public:
+  // Power-on/reset wakes listen for cfg.commandWindowMs from nowMs; timer and
+  // motion wakes don't listen, so sleep is due straight away.
+  CommandWindow(WakeCause cause, uint32_t nowMs, const CycleConfig& cfg);
+  // A command was handled at nowMs (call when it finishes, so a slow command
+  // doesn't eat the idle time): stay awake until cfg.sessionIdleMs after it.
+  void commandHandled(uint32_t nowMs);
+  bool sleepDue(uint32_t nowMs) const;
+
+ private:
+  uint32_t fromMs_;
+  uint32_t forMs_;
+  uint32_t idleMs_;
 };
 
 struct WakeResult {

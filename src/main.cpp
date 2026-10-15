@@ -9,6 +9,10 @@
 RTC_DATA_ATTR RtcState rtcState;
 
 static Esp32Ports hw;
+// This boot's wake-cycle result: the timer to sleep for once the window closes.
+static WakeResult wake;
+// Replaced in setup() with this boot's real cause and start time.
+static CommandWindow window(WakeCause::Timer, 0, CycleConfig{});
 
 static void printReading(const Reading& r) {
   Serial.printf("tilt delta pitch %+.3f roll %+.3f deg | raw pitch %+.3f roll %+.3f | noise %.4f g | %s\n",
@@ -67,12 +71,24 @@ void setup() {
 
   if (!hw.imu.begin()) log_e("MPU6050 init failed: check SDA21/SCL22 wiring");
 
-  WakeResult result = runWakeCycle(boot.cause, rtcState, CycleConfig{}, hw.ports);
-  printReading(result.reading);
-  hw.ports.sleeper.sleep(result.nextWakeS, result.motionWake);
+  wake = runWakeCycle(boot.cause, rtcState, CycleConfig{}, hw.ports);
+  printReading(wake.reading);
+
+  // Listening starts now, after the wake cycle, so the installer gets the whole
+  // window. Commands typed during the cycle wait in the UART buffer.
+  window = CommandWindow(boot.cause, millis(), CycleConfig{});
 }
 
 void loop() {
+  if (window.sleepDue(millis())) {
+    char line[24];
+    formatSleepLine(wake.nextWakeS, line, sizeof line);
+    Serial.println(line);
+    Serial.flush();  // let the line leave the UART before the chip powers down
+    hw.ports.sleeper.sleep(wake.nextWakeS, wake.motionWake);
+    return;  // not reached: deep sleep ends in a fresh boot
+  }
+
   // Serial commands, read without blocking. Fixed buffer: no heap use in loop().
   static char line[33];
   static size_t len = 0;
@@ -81,7 +97,10 @@ void loop() {
     if (c == '\n' || c == '\r') {
       while (len > 0 && line[len - 1] == ' ') --len;  // trailing spaces
       line[len] = '\0';
-      if (len > 0) handleCommand(line);
+      if (len > 0) {
+        handleCommand(line);
+        window.commandHandled(millis());  // after the command: a slow one doesn't eat the idle time
+      }
       len = 0;
     } else if (len < sizeof line - 1 && !(c == ' ' && len == 0)) {  // skip leading spaces
       line[len++] = c;

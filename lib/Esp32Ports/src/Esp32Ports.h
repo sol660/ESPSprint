@@ -1,6 +1,6 @@
 #pragma once
 
-// Real hardware behind the wake-cycle Ports. For now these are placeholders
+// Real hardware behind the wake-cycle Ports. Some are still placeholders
 // that log and report failure; later tickets fill each one in.
 
 #include <Arduino.h>

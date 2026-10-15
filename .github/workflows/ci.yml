@@ -43,3 +43,7 @@ jobs:
 
       - name: Firmware build (esp32dev)
         run: pio run -e esp32dev
+
+      # Same firmware with short timings, for the board sleep tests (test/hil/board/test_sleep.py).
+      - name: Firmware build (esp32dev_hil)
+        run: pio run -e esp32dev_hil

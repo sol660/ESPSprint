@@ -29,8 +29,13 @@ bool Esp32Uplink::sendAlert(const Alert&) { return false; }
 void Esp32CamTrigger::pulse() { log_w("CAM pulse requested (not wired yet)"); }
 
 void Esp32Sleeper::sleep(uint32_t timerS, bool motionWake) {
-  log_w("would deep-sleep %lu s (motion wake %s); deep sleep not implemented yet",
-        static_cast<unsigned long>(timerS), motionWake ? "on" : "off");
+  if (motionWake) log_w("motion wake requested but not wired yet (#5): timer only");
+  if (timerS == 0) {
+    log_w("timer of 0 s: sleeping 1 s instead, so the board always wakes again");
+    timerS = 1;
+  }
+  esp_sleep_enable_timer_wakeup(static_cast<uint64_t>(timerS) * 1000000ULL);
+  esp_deep_sleep_start();  // never returns: the next wake boots from setup()
 }
 
 WakeCause readWakeCause() {

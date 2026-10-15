@@ -130,6 +130,23 @@ WakeResult runWakeCycle(WakeCause cause, RtcState& state, const CycleConfig& cfg
   return result;
 }
 
+CommandWindow::CommandWindow(WakeCause cause, uint32_t nowMs, const CycleConfig& cfg)
+    : fromMs_(nowMs), forMs_(cfg.commandWindowMs), idleMs_(cfg.sessionIdleMs) {
+  // Only a person pressing EN or powering up is there to type: scheduled and
+  // motion wakes stay cheap on power.
+  if (cause == WakeCause::Timer || cause == WakeCause::Motion) forMs_ = idleMs_ = 0;
+}
+
+void CommandWindow::commandHandled(uint32_t nowMs) {
+  const uint32_t elapsed = nowMs - fromMs_;
+  const uint32_t remaining = elapsed >= forMs_ ? 0 : forMs_ - elapsed;
+  if (remaining >= idleMs_) return;  // the window already runs longer than the idle time
+  fromMs_ = nowMs;
+  forMs_ = idleMs_;
+}
+
+bool CommandWindow::sleepDue(uint32_t nowMs) const { return nowMs - fromMs_ >= forMs_; }
+
 CommandResult runCommand(Command cmd, RtcState& state, const CycleConfig& cfg, Ports& ports) {
   CommandResult result;
   switch (cmd) {

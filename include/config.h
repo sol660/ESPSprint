@@ -11,10 +11,22 @@ namespace config {
 
 constexpr const char* FW_VERSION = "0.1.0";
 
+// The esp32dev_hil build (-DESPSPRINT_HIL_TIMINGS) is the same firmware with
+// short timings, so board tests can watch real deep sleep in seconds (spec #14
+// "Test build"). Only the values inside the #ifdef blocks below differ.
+
 // Serial
 constexpr uint32_t SERIAL_BAUD = 115200;
-// A serial command session postpones sleep until idle this long. (Not set by spec: tune.)
-constexpr uint32_t SERIAL_SESSION_IDLE_MS = 60 * 1000;
+// Command window (spec #14): after power-on or reset the board listens for
+// commands this long, then sleeps. Each command keeps it awake until
+// SERIAL_SESSION_IDLE_MS after the last one. Timer wakes don't listen.
+#ifdef ESPSPRINT_HIL_TIMINGS
+constexpr uint32_t COMMAND_WINDOW_MS = 10 * 1000;
+constexpr uint32_t SERIAL_SESSION_IDLE_MS = 20 * 1000;
+#else
+constexpr uint32_t COMMAND_WINDOW_MS = 60 * 1000;
+constexpr uint32_t SERIAL_SESSION_IDLE_MS = 5 * 60 * 1000;
+#endif
 
 // Pins (fixed by the PCB)
 constexpr uint8_t PIN_I2C_SDA = 21;
@@ -28,7 +40,11 @@ constexpr uint32_t I2C_CLOCK_HZ = 400000;
 constexpr uint16_t IMU_SAMPLE_RATE_HZ = 100;  // readSample() is paced to this
 
 // Wake schedule
+#ifdef ESPSPRINT_HIL_TIMINGS
+constexpr uint32_t NORMAL_INTERVAL_S = 30;
+#else
 constexpr uint32_t NORMAL_INTERVAL_S = 15 * 60;
+#endif
 constexpr uint32_t EVENT_INTERVAL_S = 60;        // reading cadence in event mode
 constexpr uint32_t EVENT_DURATION_S = 30 * 60;   // event mode length after an ALERT
 constexpr uint32_t RECHECK_DELAY_S = 5 * 60;     // after a shock

@@ -35,3 +35,8 @@ void formatStatusReply(const CommandResult& r, char* out, size_t size) {
   if (n < 0) return;
   appendReading(r.reading, out, size, static_cast<size_t>(n));
 }
+
+void formatSleepLine(uint32_t timerS, char* out, size_t size) {
+  if (size == 0) return;
+  std::snprintf(out, size, "@sleep s=%lu", static_cast<unsigned long>(timerS));
+}
