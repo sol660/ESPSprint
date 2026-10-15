@@ -35,5 +35,11 @@ jobs:
       - name: PC logic tests (native)
         run: pio test -e native
 
+      # No board in CI: this only proves the board-test harness fails on a silent port (ADR 0001).
+      - name: Board-test harness self-check
+        run: |
+          python scripts/setup_venv.py
+          .venv/bin/python -m pytest test/hil/selfcheck
+
       - name: Firmware build (esp32dev)
         run: pio run -e esp32dev

@@ -40,6 +40,7 @@ These need a decision from the installer.
   - stale `@boot` text from before the reset, which must FAIL
   - a wrong firmware version, which must FAIL
   - a fake firmware that answers correctly, which must pass (the positive control)
+- CI (#15's workflow) has a new step, "Board-test harness self-check". It runs `scripts/setup_venv.py` and then `pytest test/hil/selfcheck` on Linux.
 - `platformio.ini` gains `test_ignore = hil/*`, so `pio test` never treats the pytest folder as a suite.
 - **Decision:** `ping` stays in `main.cpp` and doesn't go through `runCommand()`. It's a pure echo with no decision logic, and adding an argument to `Command` would change the `runCommand()` signature that the existing tests use.
 - **Note:** the first wake cycle runs before `loop()` reads commands. On a board with no stored baseline, that can take up to 35 s, so the hello test waits up to 45 s for `@pong`. #17's command window will change this.
