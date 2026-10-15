@@ -94,6 +94,25 @@ Reading readTiltDelta(const CycleConfig& cfg, Ports& ports, bool haveBaseline,
 
 }  // namespace
 
+BootInfo startBoot(WakeCause cause, RtcState& state) {
+  ++state.bootCount;
+  return {config::FW_VERSION, state.bootCount, cause};
+}
+
+const char* wakeCauseName(WakeCause cause) {
+  switch (cause) {
+    case WakeCause::PowerOn:
+      return "PowerOn";
+    case WakeCause::Timer:
+      return "Timer";
+    case WakeCause::Motion:
+      return "Motion";
+    case WakeCause::Serial:
+      return "Serial";
+  }
+  return "Unknown";
+}
+
 WakeResult runWakeCycle(WakeCause cause, RtcState& state, const CycleConfig& cfg, Ports& ports) {
   (void)cause;
   WakeResult result;

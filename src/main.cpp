@@ -16,6 +16,12 @@ static void printReading(const Reading& r) {
 }
 
 static void handleCommand(const char* line) {
+  // `ping <n>` echoes <n> as `@pong <n>`: board tests use it to prove a live reply.
+  if (strncmp(line, "ping ", 5) == 0 && line[5] != '\0') {
+    Serial.printf("@pong %s\n", line + 5);
+    return;
+  }
+
   Command cmd;
   if (strcmp(line, "read") == 0) {
     cmd = Command::Read;
@@ -25,7 +31,7 @@ static void handleCommand(const char* line) {
   } else if (strcmp(line, "status") == 0) {
     cmd = Command::Status;
   } else {
-    Serial.println("commands: read, baseline, status");
+    Serial.println("commands: read, baseline, status, ping <n>");
     return;
   }
 
@@ -44,9 +50,14 @@ static void handleCommand(const char* line) {
 
 void setup() {
   Serial.begin(config::SERIAL_BAUD);
+  // Boot banner first, before any slow work: board tests wait for it after a reset.
+  const BootInfo boot = startBoot(readWakeCause(), rtcState);
+  Serial.printf("\n@boot fw=%s boot=%lu cause=%s\n", boot.fwVersion,
+                static_cast<unsigned long>(boot.bootCount), wakeCauseName(boot.cause));
+
   if (!hw.imu.begin()) log_e("MPU6050 init failed: check SDA21/SCL22 wiring");
 
-  WakeResult result = runWakeCycle(readWakeCause(), rtcState, CycleConfig{}, hw.ports);
+  WakeResult result = runWakeCycle(boot.cause, rtcState, CycleConfig{}, hw.ports);
   printReading(result.reading);
   hw.ports.sleeper.sleep(result.nextWakeS, result.motionWake);
 }
@@ -58,10 +69,11 @@ void loop() {
   while (Serial.available()) {
     const char c = static_cast<char>(Serial.read());
     if (c == '\n' || c == '\r') {
+      while (len > 0 && line[len - 1] == ' ') --len;  // trailing spaces
       line[len] = '\0';
       if (len > 0) handleCommand(line);
       len = 0;
-    } else if (len < sizeof line - 1 && c != ' ') {
+    } else if (len < sizeof line - 1 && !(c == ' ' && len == 0)) {  // skip leading spaces
       line[len++] = c;
     }
   }

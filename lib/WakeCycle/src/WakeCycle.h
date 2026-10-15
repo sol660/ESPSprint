@@ -15,6 +15,19 @@ struct RtcState {
   Reading lastReading{};
 };
 
+// What the boot banner (`@boot fw= boot= cause=`) reports.
+struct BootInfo {
+  const char* fwVersion;
+  uint32_t bootCount;
+  WakeCause cause;
+};
+
+// Call first in every boot, before any slow work: counts this boot.
+BootInfo startBoot(WakeCause cause, RtcState& state);
+
+// Stable name used in tagged lines: PowerOn, Timer, Motion, Serial.
+const char* wakeCauseName(WakeCause cause);
+
 struct CycleConfig {
   uint32_t normalIntervalS = config::NORMAL_INTERVAL_S;
   uint16_t windowSamples = config::WINDOW_SAMPLES;
