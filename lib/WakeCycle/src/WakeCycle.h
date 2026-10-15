@@ -10,20 +10,29 @@ enum class WakeCause : uint8_t { PowerOn, Timer, Motion, Serial };
 
 // Kept across deep sleep in RTC memory.
 struct RtcState {
-  uint32_t seq = 0;
-  uint32_t bootCount = 0;
+  uint32_t seq = 0;        // readings numbered since the last cold boot
+  uint32_t bootCount = 0;  // this cold boot's number (kept in flash, cached here)
   Reading lastReading{};
 };
 
-// What the boot banner (`@boot fw= boot= cause=`) reports.
+// What the boot banner (`@boot fw= boot= cause= seq=`) reports.
 struct BootInfo {
   const char* fwVersion;
   uint32_t bootCount;
   WakeCause cause;
+  uint32_t seq;  // readings numbered so far in this cold boot (0 after a cold boot)
 };
 
-// Call first in every boot, before any slow work: counts this boot.
+// True for power-on, reset and crash; false for timer and motion wakes from deep sleep.
+bool isColdBoot(WakeCause cause);
+
+// Call first in every boot, before any slow work. A cold boot counts one more
+// boot and restarts seq; timer and motion wakes keep both (RTC memory).
 BootInfo startBoot(WakeCause cause, RtcState& state);
+// The same, with the count kept in flash: a cold boot counts on from the stored
+// count and saves the new one, so (device_id, seq, boot_count) never repeats
+// after a power loss.
+BootInfo startBoot(WakeCause cause, RtcState& state, Store& store);
 
 // Stable name used in tagged lines: PowerOn, Timer, Motion, Serial.
 const char* wakeCauseName(WakeCause cause);

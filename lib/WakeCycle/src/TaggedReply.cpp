@@ -36,6 +36,13 @@ void formatStatusReply(const CommandResult& r, char* out, size_t size) {
   appendReading(r.reading, out, size, static_cast<size_t>(n));
 }
 
+void formatBootLine(const BootInfo& b, char* out, size_t size) {
+  if (size == 0) return;
+  std::snprintf(out, size, "@boot fw=%s boot=%lu cause=%s seq=%lu", b.fwVersion,
+                static_cast<unsigned long>(b.bootCount), wakeCauseName(b.cause),
+                static_cast<unsigned long>(b.seq));
+}
+
 void formatSleepLine(uint32_t timerS, char* out, size_t size) {
   if (size == 0) return;
   std::snprintf(out, size, "@sleep s=%lu", static_cast<unsigned long>(timerS));

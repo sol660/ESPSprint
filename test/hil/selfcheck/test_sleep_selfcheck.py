@@ -104,8 +104,13 @@ def test_fails_when_the_board_sleeps_without_a_command_window():
     assert_failed(run(TESTS[0], board(window_s=0.0)))
 
 
-def test_fails_when_rtc_state_is_lost_across_sleep():
-    assert_failed(run(TESTS[0], board(timer_boot_step=0)))
+def test_fails_when_a_timer_wake_counts_as_a_cold_boot():
+    assert_failed(run(TESTS[0], board(timer_boot_step=1)))
+
+
+def test_fails_when_seq_resets_after_a_timer_wake():
+    # seq lives in RTC memory: a reset seq means RTC state was lost across deep sleep.
+    assert_failed(run(TESTS[0], board(timer_seq_kept=False)))
 
 
 def test_fails_when_a_timer_wake_listens_for_commands():

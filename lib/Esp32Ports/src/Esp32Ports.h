@@ -35,6 +35,8 @@ class Esp32Store : public Store {
   bool loadBaseline(Baseline& out) override;
   bool saveBaseline(const Baseline& b) override;
   bool loadCalibration(TempCalibration& out) override;
+  bool loadBootCount(uint32_t& out) override;
+  bool saveBootCount(uint32_t count) override;
   bool bufferPush(const Reading& r) override;
   size_t bufferCount() override;
   bool bufferPeek(size_t index, Reading& out) override;

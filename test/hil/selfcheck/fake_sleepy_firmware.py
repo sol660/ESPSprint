@@ -35,7 +35,7 @@ class SleepyBoard(FakeFirmware):
 
     def __init__(self, fw, clock, window_s=10.0, idle_s=20.0, interval_s=30, cycle_s=3.0,
                  timer_cycle_s=3.0, sleep_line_s=None, wakes_after_s=None, timer_cause="Timer",
-                 timer_boot_step=1, sleeps=True, commands_extend=True,
+                 timer_boot_step=0, timer_seq_kept=True, sleeps=True, commands_extend=True,
                  listens_on_timer_wake=False, **kw):
         super().__init__(fw, **kw)
         self.clock = clock
@@ -47,7 +47,8 @@ class SleepyBoard(FakeFirmware):
         self.sleep_line_s = interval_s if sleep_line_s is None else sleep_line_s
         self.wakes_after_s = interval_s if wakes_after_s is None else wakes_after_s
         self.timer_cause = timer_cause
-        self.timer_boot_step = timer_boot_step  # 0 = boot count lost across sleep
+        self.timer_boot_step = timer_boot_step  # 1 = a timer wake counted as a cold boot
+        self.timer_seq_kept = timer_seq_kept  # False = RTC memory (seq) lost across sleep
         self.sleeps = sleeps
         self.commands_extend = commands_extend
         self.listens_on_timer_wake = listens_on_timer_wake
@@ -56,6 +57,7 @@ class SleepyBoard(FakeFirmware):
         self.sleep_at = None   # when the open window closes; None: no sleep due
         self.slept = False
         self.boot = 0
+        self.seq = 0  # readings numbered since the reset (RTC memory)
 
     def at(self, t, line):
         self.pending.append((t, line))
@@ -65,9 +67,11 @@ class SleepyBoard(FakeFirmware):
         now = self.clock.t
         self.pending.clear()
         self.boot = 1
+        self.seq = 0
         self.slept = False
         self.at(now + 0.3, "ets Jun  8 2016 00:22:57")
-        self.at(now + 0.3, f"@boot fw={self.fw} boot={self.boot} cause=PowerOn")
+        self.at(now + 0.3, f"@boot fw={self.fw} boot={self.boot} cause=PowerOn seq={self.seq}")
+        self.seq += 1  # the wake cycle's reading
         self.listen_from = now + 0.3 + self.cycle_s
         self.sleep_at = self.listen_from + self.window_s if self.sleeps else None
 
@@ -82,7 +86,10 @@ class SleepyBoard(FakeFirmware):
             self.at(t, f"@sleep s={self.sleep_line_s}")
             t += self.wakes_after_s
             self.boot += self.timer_boot_step
-            self.at(t, f"@boot fw={self.fw} boot={self.boot} cause={self.timer_cause}")
+            if not self.timer_seq_kept:
+                self.seq = 0
+            self.at(t, f"@boot fw={self.fw} boot={self.boot} cause={self.timer_cause} seq={self.seq}")
+            self.seq += 1
             t += self.timer_cycle_s
 
     def readline(self):

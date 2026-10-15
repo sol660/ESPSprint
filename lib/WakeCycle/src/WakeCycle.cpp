@@ -95,11 +95,33 @@ Reading readTiltDelta(const CycleConfig& cfg, Ports& ports, bool haveBaseline,
   return r;
 }
 
+// The reading's identity: (device_id, seq, boot_count) is unique.
+void numberReading(RtcState& state, Reading& r) {
+  r.seq = ++state.seq;
+  r.bootCount = state.bootCount;
+}
+
 }  // namespace
 
+bool isColdBoot(WakeCause cause) {
+  return cause != WakeCause::Timer && cause != WakeCause::Motion;
+}
+
 BootInfo startBoot(WakeCause cause, RtcState& state) {
-  ++state.bootCount;
-  return {config::FW_VERSION, state.bootCount, cause};
+  if (isColdBoot(cause)) {
+    ++state.bootCount;
+    state.seq = 0;
+  }
+  return {config::FW_VERSION, state.bootCount, cause, state.seq};
+}
+
+BootInfo startBoot(WakeCause cause, RtcState& state, Store& store) {
+  if (!isColdBoot(cause)) return startBoot(cause, state);
+  uint32_t stored = 0;
+  state.bootCount = store.loadBootCount(stored) ? stored : 0;
+  const BootInfo info = startBoot(cause, state);
+  store.saveBootCount(info.bootCount);  // a failed save is logged by the Store
+  return info;
 }
 
 const char* wakeCauseName(WakeCause cause) {
@@ -124,6 +146,7 @@ WakeResult runWakeCycle(WakeCause cause, RtcState& state, const CycleConfig& cfg
   if (!haveBaseline) haveBaseline = captureBaseline(cfg, ports, baseline);
 
   result.reading = readTiltDelta(cfg, ports, haveBaseline, baseline);
+  numberReading(state, result.reading);
   state.lastReading = result.reading;
   result.tookReading = true;
   result.nextWakeS = cfg.normalIntervalS;

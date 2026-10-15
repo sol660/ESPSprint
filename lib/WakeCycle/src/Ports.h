@@ -72,6 +72,9 @@ class Store {
   virtual bool loadBaseline(Baseline& out) = 0;
   virtual bool saveBaseline(const Baseline& b) = 0;
   virtual bool loadCalibration(TempCalibration& out) = 0;
+  // Cold boots so far; false when none has been saved yet.
+  virtual bool loadBootCount(uint32_t& out) = 0;
+  virtual bool saveBootCount(uint32_t count) = 0;
   virtual bool bufferPush(const Reading& r) = 0;
   virtual size_t bufferCount() = 0;
   virtual bool bufferPeek(size_t index, Reading& out) = 0;  // 0 = oldest

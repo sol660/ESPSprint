@@ -139,6 +139,25 @@ bool Esp32Imu::resetBus() {  // full bus recovery: #7
 
 namespace {
 constexpr const char* KEY_BASELINE = "baseline";
+constexpr const char* KEY_BOOT_COUNT = "boots";
+}
+
+bool Esp32Store::loadBootCount(uint32_t& out) {
+  Preferences prefs;
+  if (!prefs.begin(ns_, true)) return false;  // read-only; fails if never written
+  const bool ok = prefs.isKey(KEY_BOOT_COUNT);
+  if (ok) out = prefs.getULong(KEY_BOOT_COUNT, 0);
+  prefs.end();
+  return ok;
+}
+
+bool Esp32Store::saveBootCount(uint32_t count) {
+  Preferences prefs;
+  if (!prefs.begin(ns_, false)) return false;
+  const bool ok = prefs.putULong(KEY_BOOT_COUNT, count) == sizeof(uint32_t);
+  prefs.end();
+  if (!ok) log_e("boot count save to flash failed: boot_count may repeat after a power loss");
+  return ok;
 }
 
 bool Esp32Store::loadBaseline(Baseline& out) {

@@ -70,6 +70,20 @@ class FakeStore : public Store {
   std::deque<Reading> buffer;
   bool hasPendingAlert = false;
   Alert pendingAlert{};
+  bool hasBootCount = false;
+  uint32_t bootCount = 0;
+  int bootCountSaves = 0;
+
+  bool loadBootCount(uint32_t& out) override {
+    if (hasBootCount) out = bootCount;
+    return hasBootCount;
+  }
+  bool saveBootCount(uint32_t count) override {
+    bootCount = count;
+    hasBootCount = true;
+    ++bootCountSaves;
+    return true;
+  }
 
   bool loadBaseline(Baseline& out) override {
     if (hasBaseline) out = baseline;

@@ -14,5 +14,8 @@ void formatReadReply(const CommandResult& r, char* out, size_t size);
 // for `status` and `baseline`. bpitch/broll appear only when there is a baseline.
 void formatStatusReply(const CommandResult& r, char* out, size_t size);
 
+// `@boot fw=<ver> boot=<n> cause=<PowerOn|Timer|...> seq=<n>`, the first line of every boot.
+void formatBootLine(const BootInfo& b, char* out, size_t size);
+
 // `@sleep s=<seconds>`, printed just before deep sleep with the timer wake set.
 void formatSleepLine(uint32_t timerS, char* out, size_t size);

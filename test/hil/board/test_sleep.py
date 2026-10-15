@@ -60,9 +60,14 @@ def test_sleeps_after_the_window_and_wakes_on_the_timer(board):
         f"(PowerOn means the board reset instead of sleeping): {wake.line}")
     assert woke - asleep >= INTERVAL_S - TIMER_EARLY_S, (
         f"woke {woke - asleep:.1f} s after @sleep, expected about {INTERVAL_S} s: {wake.line}")
-    # RTC memory survived the sleep: the boot count carried on from the reset.
-    assert wake.number("boot") == boot.number("boot") + 1, (
+    # Only cold boots count (the count is kept in flash): a timer wake keeps it.
+    assert wake.number("boot") == boot.number("boot"), (
         f"boot count went from {boot.fields.get('boot')} to {wake.fields.get('boot')} "
+        f"across a timer wake (counted as a cold boot?): {wake.line}")
+    # RTC memory survived the sleep: seq carried on from the readings taken
+    # since the reset (it restarts only on a cold boot).
+    assert wake.number("seq") > boot.number("seq"), (
+        f"seq went from {boot.fields.get('seq')} to {wake.fields.get('seq')} "
         f"(RTC state lost across deep sleep?): {wake.line}")
 
     # A timer wake doesn't listen: it reads and goes straight back to sleep.

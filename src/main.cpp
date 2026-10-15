@@ -65,9 +65,11 @@ static void handleCommand(const char* line) {
 void setup() {
   Serial.begin(config::SERIAL_BAUD);
   // Boot banner first, before any slow work: board tests wait for it after a reset.
-  const BootInfo boot = startBoot(readWakeCause(), rtcState);
-  Serial.printf("\n@boot fw=%s boot=%lu cause=%s\n", boot.fwVersion,
-                static_cast<unsigned long>(boot.bootCount), wakeCauseName(boot.cause));
+  // Cold boots count on from the count in flash; timer wakes keep it.
+  const BootInfo boot = startBoot(readWakeCause(), rtcState, hw.store);
+  char bootLine[80];
+  formatBootLine(boot, bootLine, sizeof bootLine);
+  Serial.printf("\n%s\n", bootLine);
 
   if (!hw.imu.begin()) log_e("MPU6050 init failed: check SDA21/SCL22 wiring");
 
