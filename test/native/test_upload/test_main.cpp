@@ -115,8 +115,9 @@ void test_time_is_synced_after_connecting_and_the_reading_dated_back() {
 
   TEST_ASSERT_EQUAL(1, hw.clock.syncCalls);
   const Reading& sent = hw.uplink.batchesSent.at(0).at(0);
-  TEST_ASSERT_TRUE(sent.timeSynced);
-  // Taken before the sync, so dated back by the time since it was taken.
+  // Taken before the first sync, so time_synced stays false (#19 AC; user
+  // decision on #14), but its time is dated back by the time since it was taken.
+  TEST_ASSERT_FALSE(sent.timeSynced);
   TEST_ASSERT_EQUAL_UINT32(1792800000u - 3, sent.ts);
 }
 

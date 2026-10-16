@@ -265,7 +265,7 @@ void test_the_alert_is_dated_back_with_its_reading_once_the_time_is_synced() {
 
   WakeResult r = site.wake(3.0f);
 
-  TEST_ASSERT_TRUE(r.reading.timeSynced);
+  TEST_ASSERT_FALSE(r.reading.timeSynced);  // taken before the first sync (#19 AC)
   TEST_ASSERT_EQUAL_UINT32(r.reading.ts, site.hw.uplink.alertsSent.at(0).ts);
   TEST_ASSERT_EQUAL_UINT32(1792800000u, site.hw.uplink.alertsSent.at(0).ts);
 }

@@ -114,11 +114,11 @@ bool connectAndSync(Ports& ports) {
 }
 
 // A reading taken before the clock was set gets real time once it is: now,
-// less the time since it was taken.
+// less the time since it was taken. It stays time_synced=false (#19 AC).
 void dateBack(Clock& clock, uint32_t takenAtMs, Reading& r) {
   if (r.timeSynced || !clock.isSynced()) return;
   r.ts = clock.nowUtc() - (clock.uptimeMs() - takenAtMs) / 1000;
-  r.timeSynced = true;
+  // timeSynced stays false: the reading was taken before the first sync (#19 AC).
 }
 
 // The level rules (spec #1 "Levels", #14, ADR 0002), applied to each wake

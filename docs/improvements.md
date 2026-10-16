@@ -8,7 +8,7 @@ A running log of what changed, the decisions made along the way, and what's stil
 
 From the spec #14 code review (left as they are, for a decision):
 
-- **`time_synced` on a back-dated reading.** #19's AC says readings taken before the first time sync have `time_synced=false`, but a reading taken before the sync is still marked `true` once the same wake syncs (`dateBack()`, with its `ts` dated back). Not changed: two existing tests assert the current behaviour, `test/native/test_upload/test_main.cpp:118` (`test_time_is_synced_after_connecting_and_the_reading_dated_back`) and `test/native/test_levels/test_main.cpp:268` (`test_the_alert_is_dated_back_with_its_reading_once_the_time_is_synced`). Changing it needs the user's approval for those two tests.
+- ~~**`time_synced` on a back-dated reading.**~~ **Resolved 2026-10-16 (user: follow the spec):** a reading taken before the first sync keeps its dated-back `ts` but stays `time_synced=false`. The two tests that asserted the old behaviour were changed with the user's approval (#14).
 - **The HTTPS post still blocks `loop()`** inside the `wifi` and `alert` commands, for up to 2 × `HTTP_TIMEOUT_MS` (TLS handshake, then the response). Only the WiFi join and NTP waits are polled.
 - **`setup()`'s power-on wake waits on WiFi** (up to 2 × `WIFI_CONNECT_TIMEOUT_S` + NTP + HTTPS) before the command window opens.
 - **HIL `SERIAL_SESSION_IDLE_MS` is 20 s** in `esp32dev_hil`, short for typing by hand on that build.
@@ -70,7 +70,7 @@ One pass over the `core-build` code review. Behaviour fixes were built test-firs
 - **`baseline` restarts the step rule.** After a new baseline, `LevelState::hasPrevious` is reset, so the old delta can't raise a false 0.5° step ALERT on the next wake.
 - **The `wifi` reading carries the current level** (`state.levels.level`) into its reply and its Supabase row, instead of always OK. A command reading still doesn't change the level.
 - **1 s minimum sleep in the core.** `runWakeCycle` never asks for a 0 s timer; the rule moved out of `Esp32Sleeper`.
-- **Not done: `time_synced` before the first sync** (see Open questions): two existing tests assert the current back-dating.
+- **`time_synced` before the first sync:** done after the review, on the user's decision (see Open questions).
 
 **Tidy-ups (behaviour unchanged):** one `httpsPost()` helper in `Esp32Ports.cpp` for Supabase and ntfy (same CA check, timeouts and log text); `READING_JSON_BUF_SIZE` (640) in `ReadingJson.h` for the row buffer and body reserve; `isTestTag()` for every "is this a test" check, one `tag=` formatter in `TaggedReply.cpp`, one `wifi`/`alert` argument parser in `main.cpp`; `withPrefs()`/`getBlob()`/`putBlob()` for the `Preferences` begin/put/end pattern in `Esp32Store`; `isUtcValid()` in `Ports.h` shared by `Esp32Clock::isSynced` and the alert message; the ESP32 `pollConnect`/`pollSync` call `vTaskDelay(1)` while Pending, so the blocking `connect()`/`sync()` wrappers (documented as `setup()` and `runCommand` only) don't hog the CPU; `WifiCommand::command()` replaces `main.cpp`'s `netCommand` copy (the class keeps its name; a comment says it also runs `alert`).
 
@@ -109,7 +109,7 @@ One pass over the `core-build` code review. Behaviour fixes were built test-firs
 - **Self-check (`selfcheck/test_upload_selfcheck.py`, `fake_supabase.py`):** both tests pass against a healthy fake board and database, and FAIL for: no row, two rows, a row under another tag, a row older than the test or in the future, unsynced time, each value differing from `@read`, another `fw`, `@upload ok=0`, a silent port, a board without `wifi`, and a key that can update (openly or silently), delete or not insert. The secrets parsing is checked against the real template.
 - **Build:** `esp32dev` (and so `esp32dev_hil`) now builds with `-DCORE_DEBUG_LEVEL=2`. The Arduino default is no logging at all, so `log_e`/`log_w` (for example why an upload failed) never printed.
 - **Decisions to review:**
-  - **Dating back:** a reading taken before the first sync (the first wake after power-on) gets real time once the sync succeeds in the same wake: now minus the uptime since it was taken, and `time_synced=true`. Only a reading whose wake doesn't sync stays `time_synced=false` with time since power-on.
+  - **Dating back:** a reading taken before the first sync (the first wake after power-on) gets real time once the sync succeeds in the same wake: now minus the uptime since it was taken, and `time_synced=true`. Only a reading whose wake doesn't sync stays `time_synced=false` with time since power-on. *(Superseded 2026-10-16: the reading is still dated back but stays `time_synced=false`.)*
   - NTP is synced on every connected wake (spec #1), not just the first.
   - `wifi <n>` uses the given tag (the board test passes its own), plain `wifi` picks a random 9-digit one.
 - **Not done:** no on-board run yet (no Supabase project exists). The board timing concern for the existing tests is in "Still to verify on the board".
