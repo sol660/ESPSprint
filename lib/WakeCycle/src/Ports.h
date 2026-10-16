@@ -58,13 +58,29 @@ class Imu {
   virtual bool resetBus() = 0;
 };
 
+// How a slow network step is going, for steps that are started and then polled
+// from loop() (CLAUDE.md: no blocking waits in loop()).
+enum class Progress : uint8_t { Pending, Done, Failed };
+
 class Clock {
  public:
   virtual ~Clock() = default;
   virtual uint32_t nowUtc() = 0;
   virtual bool isSynced() = 0;
   virtual uint32_t uptimeMs() = 0;  // for in-wake time budgets
-  virtual bool sync() = 0;
+  // Time sync over the network (needs the Uplink connected), in two steps:
+  // startSync() returns at once; pollSync() checks without waiting and gives
+  // Pending until the time is set (Done) or its time limit passes (Failed).
+  virtual void startSync() = 0;
+  virtual Progress pollSync() = 0;
+  // The same, waiting until it finishes. For the wake cycle in setup() only.
+  virtual bool sync() {
+    startSync();
+    Progress p;
+    while ((p = pollSync()) == Progress::Pending) {
+    }
+    return p == Progress::Done;
+  }
 };
 
 class Store {
@@ -89,8 +105,20 @@ class Store {
 class Uplink {
  public:
   virtual ~Uplink() = default;
-  // Joins a network; false = offline for this wake (a normal result, not an error).
-  virtual bool connect() = 0;
+  // Joining a network, in two steps: startConnect() returns at once;
+  // pollConnect() checks without waiting and gives Pending until a network is
+  // joined (Done) or every network has had its time limit (Failed = offline for
+  // this wake, a normal result, not an error).
+  virtual void startConnect() = 0;
+  virtual Progress pollConnect() = 0;
+  // The same, waiting until it finishes. For the wake cycle in setup() only.
+  virtual bool connect() {
+    startConnect();
+    Progress p;
+    while ((p = pollConnect()) == Progress::Pending) {
+    }
+    return p == Progress::Done;
+  }
   // Radio off. Called after every upload attempt, connected or not.
   virtual void disconnect() = 0;
   // Needs connect() first. True only if the server stored every reading.

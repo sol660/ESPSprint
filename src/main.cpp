@@ -13,6 +13,8 @@ static Esp32Ports hw;
 static WakeResult wake;
 // Replaced in setup() with this boot's real cause and start time.
 static CommandWindow window(WakeCause::Timer, 0, CycleConfig{});
+// The `wifi` command runs across loop() calls, so loop() never waits on WiFi.
+static WifiCommand wifiCommand;
 
 static void printReading(const Reading& r) {
   Serial.printf("tilt delta pitch %+.3f roll %+.3f deg | raw pitch %+.3f roll %+.3f | noise %.4f g | %s\n",
@@ -27,35 +29,7 @@ static void printUpload(const Reading& r, bool ok) {
   Serial.println(line);
 }
 
-static void handleCommand(const char* line) {
-  // `ping <n>` echoes <n> as `@pong <n>`: board tests use it to prove a live reply.
-  if (strncmp(line, "ping ", 5) == 0 && line[5] != '\0') {
-    Serial.printf("@pong %s\n", line + 5);
-    return;
-  }
-
-  Command cmd;
-  uint32_t testTag = 0;
-  if (strcmp(line, "wifi") == 0 || strncmp(line, "wifi ", 5) == 0) {
-    // `wifi <n>` tags the test row with <n> (board tests pass their own random
-    // number); plain `wifi` picks a random 9-digit tag.
-    cmd = Command::Wifi;
-    testTag = line[4] == ' ' ? strtoul(line + 5, nullptr, 10) : 0;
-    if (testTag == 0) testTag = 100000000UL + esp_random() % 900000000UL;
-    Serial.println("wifi: connecting, then reading and uploading (up to ~90 s)...");
-  } else if (strcmp(line, "read") == 0) {
-    cmd = Command::Read;
-  } else if (strcmp(line, "baseline") == 0) {
-    cmd = Command::Baseline;
-    Serial.println("capturing baseline: keep the unit still...");
-  } else if (strcmp(line, "status") == 0) {
-    cmd = Command::Status;
-  } else {
-    Serial.println("commands: read, baseline, status, wifi [tag], ping <n>");
-    return;
-  }
-
-  const CommandResult r = runCommand(cmd, rtcState, CycleConfig{}, hw.ports, testTag);
+static void printCommandResult(Command cmd, const CommandResult& r) {
   if (!r.ok) {
     Serial.println("failed (unit moving, or flash write error)");
   } else {
@@ -79,6 +53,46 @@ static void handleCommand(const char* line) {
   if (r.uploadTried) printUpload(r.reading, r.uploaded);
 }
 
+// Handles one typed line. `wifi` only starts here; loop() finishes it.
+static void handleCommand(const char* line) {
+  // `ping <n>` echoes <n> as `@pong <n>`: board tests use it to prove a live reply.
+  if (strncmp(line, "ping ", 5) == 0 && line[5] != '\0') {
+    Serial.printf("@pong %s\n", line + 5);
+    window.commandHandled(millis());
+    return;
+  }
+
+  Command cmd;
+  uint32_t testTag = 0;
+  if (strcmp(line, "wifi") == 0 || strncmp(line, "wifi ", 5) == 0) {
+    // `wifi <n>` tags the test row with <n> (board tests pass their own random
+    // number); plain `wifi` picks a random 9-digit tag.
+    cmd = Command::Wifi;
+    testTag = line[4] == ' ' ? strtoul(line + 5, nullptr, 10) : 0;
+    if (testTag == 0) testTag = 100000000UL + esp_random() % 900000000UL;
+    Serial.println("wifi: connecting, then reading and uploading (up to ~90 s)...");
+  } else if (strcmp(line, "read") == 0) {
+    cmd = Command::Read;
+  } else if (strcmp(line, "baseline") == 0) {
+    cmd = Command::Baseline;
+    Serial.println("capturing baseline: keep the unit still...");
+  } else if (strcmp(line, "status") == 0) {
+    cmd = Command::Status;
+  } else {
+    Serial.println("commands: read, baseline, status, wifi [tag], ping <n>");
+    window.commandHandled(millis());
+    return;
+  }
+
+  if (cmd == Command::Wifi) {
+    wifiCommand.start(testTag, hw.ports);  // loop() polls it until it is done
+    window.commandStarted();
+    return;
+  }
+  printCommandResult(cmd, runCommand(cmd, rtcState, CycleConfig{}, hw.ports));
+  window.commandHandled(millis());  // after the command: a slow one doesn't eat the idle time
+}
+
 void setup() {
   Serial.begin(config::SERIAL_BAUD);
   // Boot banner first, before any slow work: board tests wait for it after a reset.
@@ -100,6 +114,15 @@ void setup() {
 }
 
 void loop() {
+  if (wifiCommand.busy()) {
+    // Polled, never waited on. Typed input waits in the UART buffer meanwhile.
+    if (wifiCommand.poll(rtcState, CycleConfig{}, hw.ports)) {
+      printCommandResult(Command::Wifi, wifiCommand.result());
+      window.commandHandled(millis());
+    }
+    return;
+  }
+
   if (window.sleepDue(millis())) {
     char line[24];
     formatSleepLine(wake.nextWakeS, line, sizeof line);
@@ -117,11 +140,9 @@ void loop() {
     if (c == '\n' || c == '\r') {
       while (len > 0 && line[len - 1] == ' ') --len;  // trailing spaces
       line[len] = '\0';
-      if (len > 0) {
-        handleCommand(line);
-        window.commandHandled(millis());  // after the command: a slow one doesn't eat the idle time
-      }
+      if (len > 0) handleCommand(line);
       len = 0;
+      if (wifiCommand.busy()) return;  // the rest of the input waits until it is done
     } else if (len < sizeof line - 1 && !(c == ' ' && len == 0)) {  // skip leading spaces
       line[len++] = c;
     }

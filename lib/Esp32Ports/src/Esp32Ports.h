@@ -26,7 +26,11 @@ class Esp32Clock : public Clock {
   uint32_t nowUtc() override;
   bool isSynced() override;
   uint32_t uptimeMs() override;
-  bool sync() override;
+  void startSync() override;
+  Progress pollSync() override;
+
+ private:
+  uint32_t syncStartMs_ = 0;
 };
 
 class Esp32Store : public Store {
@@ -49,15 +53,24 @@ class Esp32Store : public Store {
   const char* ns_;  // Preferences (NVS) namespace
 };
 
-// WiFi (secrets::WIFI_NETWORKS in order) + HTTPS POST to Supabase's REST API.
-// Self-contained so it can be swapped for other WiFi code: the core only sees
-// connect / disconnect / sendReadings.
+// WiFi (secrets::WIFI_NETWORKS in order: WPA2-Personal or WPA2-Enterprise PEAP)
+// + HTTPS POST to Supabase's REST API, with the server certificate checked
+// against RootCa.h. Self-contained so it can be swapped for other WiFi code:
+// the core only sees connect / disconnect / sendReadings. Joining is polled
+// with millis(), never waited on with delay().
 class Esp32Uplink : public Uplink {
  public:
-  bool connect() override;
+  void startConnect() override;
+  Progress pollConnect() override;
   void disconnect() override;
   bool sendReadings(const Reading* readings, size_t count) override;
   bool sendAlert(const Alert& alert) override;
+
+ private:
+  void beginNetwork();
+  size_t network_ = 0;  // index into secrets::WIFI_NETWORKS being tried
+  size_t networks_ = 0;  // how many are tried (at most config::WIFI_MAX_NETWORKS)
+  uint32_t networkStartMs_ = 0;
 };
 
 class Esp32CamTrigger : public CamTrigger {

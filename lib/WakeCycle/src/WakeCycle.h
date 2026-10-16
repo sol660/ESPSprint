@@ -62,12 +62,16 @@ class CommandWindow {
   // A command was handled at nowMs (call when it finishes, so a slow command
   // doesn't eat the idle time): stay awake until cfg.sessionIdleMs after it.
   void commandHandled(uint32_t nowMs);
+  // A command that runs across loop() calls (`wifi`) has started: no sleep
+  // until commandHandled() reports it finished.
+  void commandStarted() { running_ = true; }
   bool sleepDue(uint32_t nowMs) const;
 
  private:
   uint32_t fromMs_;
   uint32_t forMs_;
   uint32_t idleMs_;
+  bool running_ = false;
 };
 
 struct WakeResult {
@@ -101,6 +105,31 @@ struct CommandResult {
   bool uploaded = false;
 };
 
-// testTag is used by Command::Wifi only (non-zero).
+// testTag is used by Command::Wifi only (non-zero). Command::Wifi waits here
+// until it is done; loop() uses WifiCommand instead, so it never blocks.
 CommandResult runCommand(Command cmd, RtcState& state, const CycleConfig& cfg, Ports& ports,
                          uint32_t testTag = 0);
+
+// The `wifi` command, polled from loop() so it never blocks on the network
+// (CLAUDE.md rule). start() begins joining WiFi and returns at once; call poll()
+// on every loop() until it returns true, then read result(). Steps: join WiFi,
+// sync the time, then take the reading, upload it tagged with testTag and turn
+// the radio off. Offline, it still reads and reports the failed upload.
+// The reading and the HTTPS post themselves take a few seconds each, as in the
+// `read` command; only the open-ended network waits are polled.
+class WifiCommand {
+ public:
+  void start(uint32_t testTag, Ports& ports);
+  // True once the command has finished (also on the call that finishes it).
+  bool poll(RtcState& state, const CycleConfig& cfg, Ports& ports);
+  bool busy() const { return step_ == Step::Joining || step_ == Step::Syncing; }
+  const CommandResult& result() const { return result_; }
+
+ private:
+  enum class Step : uint8_t { Idle, Joining, Syncing, Done };
+  void finish(bool connected, RtcState& state, const CycleConfig& cfg, Ports& ports);
+
+  Step step_ = Step::Idle;
+  uint32_t testTag_ = 0;
+  CommandResult result_{};
+};

@@ -194,6 +194,7 @@ CommandWindow::CommandWindow(WakeCause cause, uint32_t nowMs, const CycleConfig&
 }
 
 void CommandWindow::commandHandled(uint32_t nowMs) {
+  running_ = false;
   const uint32_t elapsed = nowMs - fromMs_;
   const uint32_t remaining = elapsed >= forMs_ ? 0 : forMs_ - elapsed;
   if (remaining >= idleMs_) return;  // the window already runs longer than the idle time
@@ -201,7 +202,9 @@ void CommandWindow::commandHandled(uint32_t nowMs) {
   forMs_ = idleMs_;
 }
 
-bool CommandWindow::sleepDue(uint32_t nowMs) const { return nowMs - fromMs_ >= forMs_; }
+bool CommandWindow::sleepDue(uint32_t nowMs) const {
+  return !running_ && nowMs - fromMs_ >= forMs_;
+}
 
 CommandResult runCommand(Command cmd, RtcState& state, const CycleConfig& cfg, Ports& ports,
                          uint32_t testTag) {
@@ -223,19 +226,63 @@ CommandResult runCommand(Command cmd, RtcState& state, const CycleConfig& cfg, P
       result.ok = true;
       break;
     case Command::Wifi: {
-      // Connect first, so the reading has real time, then read and upload.
-      const bool connected = connectAndSync(ports);
-      result.hasBaseline = ports.store.loadBaseline(result.baseline);
-      result.reading = readTiltDelta(cfg, ports, result.hasBaseline, result.baseline);
-      stampReading(state, ports.clock, result.reading);
-      result.reading.testTag = testTag;
-      result.ok = true;
-      result.uploadTried = true;
-      result.uploaded = connected && ports.uplink.sendReadings(&result.reading, 1);
-      ports.uplink.disconnect();
-      state.lastReading = result.reading;
+      WifiCommand wifi;
+      wifi.start(testTag, ports);
+      while (!wifi.poll(state, cfg, ports)) {
+      }
+      result = wifi.result();
       break;
     }
   }
   return result;
+}
+
+void WifiCommand::start(uint32_t testTag, Ports& ports) {
+  testTag_ = testTag;
+  result_ = CommandResult{};
+  step_ = Step::Joining;
+  ports.uplink.startConnect();
+}
+
+bool WifiCommand::poll(RtcState& state, const CycleConfig& cfg, Ports& ports) {
+  switch (step_) {
+    case Step::Idle:
+    case Step::Done:
+      return true;
+    case Step::Joining:
+      switch (ports.uplink.pollConnect()) {
+        case Progress::Pending:
+          return false;
+        case Progress::Done:
+          // Sync before reading, so the reading has real time (spec #14: NTP
+          // after connecting).
+          ports.clock.startSync();
+          step_ = Step::Syncing;
+          return false;
+        case Progress::Failed:
+          finish(false, state, cfg, ports);
+          return true;
+      }
+      return false;
+    case Step::Syncing:
+      // A failed sync still uploads, with time_synced=false.
+      if (ports.clock.pollSync() == Progress::Pending) return false;
+      finish(true, state, cfg, ports);
+      return true;
+  }
+  return true;
+}
+
+void WifiCommand::finish(bool connected, RtcState& state, const CycleConfig& cfg, Ports& ports) {
+  CommandResult& r = result_;
+  r.hasBaseline = ports.store.loadBaseline(r.baseline);
+  r.reading = readTiltDelta(cfg, ports, r.hasBaseline, r.baseline);
+  stampReading(state, ports.clock, r.reading);
+  r.reading.testTag = testTag_;
+  r.ok = true;
+  r.uploadTried = true;
+  r.uploaded = connected && ports.uplink.sendReadings(&r.reading, 1);
+  ports.uplink.disconnect();
+  state.lastReading = r.reading;
+  step_ = Step::Done;
 }

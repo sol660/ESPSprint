@@ -62,6 +62,23 @@ class FakeClock : public Clock {
     }
     return syncSucceeds;
   }
+  // Step by step: startSync() counts a sync, then pollSync() is Pending this many times.
+  int pollsBeforeSynced = 0;
+  int syncPollsLeft = 0;
+  void startSync() override {
+    ++syncCalls;
+    syncPollsLeft = pollsBeforeSynced;
+  }
+  Progress pollSync() override {
+    if (syncPollsLeft > 0) {
+      --syncPollsLeft;
+      return Progress::Pending;
+    }
+    if (!syncSucceeds) return Progress::Failed;
+    synced = true;
+    if (utcAfterSync != 0) utc = utcAfterSync;
+    return Progress::Done;
+  }
 };
 
 class FakeStore : public Store {
@@ -142,6 +159,23 @@ class FakeUplink : public Uplink {
     ++connects;
     connected = up;
     return connected;
+  }
+  // Step by step: startConnect() counts a connect, then pollConnect() is Pending
+  // this many times before it joins (or fails, when !up).
+  int pollsBeforeJoined = 0;
+  int joinPollsLeft = 0;
+  void startConnect() override {
+    ++connects;
+    connected = false;
+    joinPollsLeft = pollsBeforeJoined;
+  }
+  Progress pollConnect() override {
+    if (joinPollsLeft > 0) {
+      --joinPollsLeft;
+      return Progress::Pending;
+    }
+    connected = up;
+    return up ? Progress::Done : Progress::Failed;
   }
   void disconnect() override {
     ++disconnects;

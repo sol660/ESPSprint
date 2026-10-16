@@ -7,9 +7,11 @@
 #include <Wire.h>
 #include <esp_sleep.h>
 #include <esp_sntp.h>
+#include <esp_wpa2.h>
 #include <time.h>
 
 #include "ReadingJson.h"
+#include "RootCa.h"
 #include "config.h"
 
 #if __has_include("secrets.h")
@@ -27,20 +29,20 @@ uint32_t Esp32Clock::nowUtc() { return static_cast<uint32_t>(time(nullptr)); }
 bool Esp32Clock::isSynced() { return nowUtc() > config::CLOCK_VALID_AFTER_UTC; }
 uint32_t Esp32Clock::uptimeMs() { return millis(); }
 
-bool Esp32Clock::sync() {  // needs WiFi up
+void Esp32Clock::startSync() {  // needs WiFi up
   sntp_set_sync_status(SNTP_SYNC_STATUS_RESET);
   configTime(0, 0, config::NTP_SERVER_1, config::NTP_SERVER_2);  // UTC
-  const uint32_t start = millis();
-  // Bounded wait inside a wake or the `wifi` command, not in loop() polling.
-  while (millis() - start < config::NTP_SYNC_TIMEOUT_MS) {
-    if (sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED) {
-      log_i("time synced: %lu", static_cast<unsigned long>(nowUtc()));
-      return true;
-    }
-    delay(50);  // lets the WiFi/lwIP tasks run
+  syncStartMs_ = millis();
+}
+
+Progress Esp32Clock::pollSync() {
+  if (sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED) {
+    log_i("time synced: %lu", static_cast<unsigned long>(nowUtc()));
+    return Progress::Done;
   }
+  if (millis() - syncStartMs_ < config::NTP_SYNC_TIMEOUT_MS) return Progress::Pending;
   log_w("NTP sync timed out after %lu ms", static_cast<unsigned long>(config::NTP_SYNC_TIMEOUT_MS));
-  return false;
+  return Progress::Failed;
 }
 
 bool Esp32Store::loadCalibration(TempCalibration&) { return false; }
@@ -87,28 +89,45 @@ const char* resetReasonName() {
 
 }  // namespace
 
-bool Esp32Uplink::connect() {
+void Esp32Uplink::startConnect() {
   WiFi.persistent(false);  // don't write the credentials to flash on every wake
   WiFi.mode(WIFI_STA);
-  const size_t tries = min(secrets::WIFI_NETWORK_COUNT, static_cast<size_t>(config::WIFI_MAX_NETWORKS));
-  for (size_t i = 0; i < tries; ++i) {
-    const secrets::WifiNetwork& net = secrets::WIFI_NETWORKS[i];
+  network_ = 0;
+  networks_ = min(secrets::WIFI_NETWORK_COUNT, static_cast<size_t>(config::WIFI_MAX_NETWORKS));
+  if (networks_ > 0) beginNetwork();
+}
+
+void Esp32Uplink::beginNetwork() {
+  const secrets::WifiNetwork& net = secrets::WIFI_NETWORKS[network_];
+  if (net.auth == secrets::WifiAuth::EnterprisePeap) {
+    // No RADIUS server CA is passed (as in the user's eduroam code): see
+    // docs/improvements.md #19.
+    log_i("WiFi: trying %s (WPA2-Enterprise PEAP)", net.ssid);
+    WiFi.begin(net.ssid, WPA2_AUTH_PEAP, net.identity, net.username, net.password);
+  } else {
     log_i("WiFi: trying %s", net.ssid);
+    // The core leaves Enterprise mode on after a PEAP attempt in this boot.
+    esp_wifi_sta_wpa2_ent_disable();
     WiFi.begin(net.ssid, net.password);
-    const uint32_t start = millis();
-    // Bounded wait inside a wake or the `wifi` command, not in loop() polling.
-    while (millis() - start < config::WIFI_CONNECT_TIMEOUT_S * 1000UL) {
-      if (WiFi.status() == WL_CONNECTED) {
-        log_i("WiFi: joined %s, RSSI %d dBm", net.ssid, WiFi.RSSI());
-        return true;
-      }
-      delay(100);
-    }
-    log_w("WiFi: %s not joined within %lu s", net.ssid,
-          static_cast<unsigned long>(config::WIFI_CONNECT_TIMEOUT_S));
-    WiFi.disconnect();
   }
-  return false;
+  networkStartMs_ = millis();
+}
+
+Progress Esp32Uplink::pollConnect() {
+  if (network_ >= networks_) return Progress::Failed;
+  const secrets::WifiNetwork& net = secrets::WIFI_NETWORKS[network_];
+  if (WiFi.status() == WL_CONNECTED) {
+    log_i("WiFi: joined %s, RSSI %d dBm", net.ssid, WiFi.RSSI());
+    return Progress::Done;
+  }
+  if (millis() - networkStartMs_ < config::WIFI_CONNECT_TIMEOUT_S * 1000UL) return Progress::Pending;
+
+  log_w("WiFi: %s not joined within %lu s", net.ssid,
+        static_cast<unsigned long>(config::WIFI_CONNECT_TIMEOUT_S));
+  WiFi.disconnect();
+  if (++network_ >= networks_) return Progress::Failed;
+  beginNetwork();
+  return Progress::Pending;
 }
 
 void Esp32Uplink::disconnect() {
@@ -135,10 +154,10 @@ bool Esp32Uplink::sendReadings(const Reading* readings, size_t count) {
   }
   body += ']';
 
-  // TLS without checking the server certificate: the link is still encrypted,
-  // and the key only allows inserts (supabase/schema.sql). See docs/improvements.md #19.
+  // The server certificate must chain to one of the roots in RootCa.h.
   WiFiClientSecure tls;
-  tls.setInsecure();
+  tls.setCACert(root_ca::HTTPS_ROOTS);
+  tls.setHandshakeTimeout(config::HTTP_TIMEOUT_MS / 1000);  // seconds; the default is 120
   HTTPClient http;
   http.setTimeout(config::HTTP_TIMEOUT_MS);
   http.setConnectTimeout(config::HTTP_TIMEOUT_MS);
