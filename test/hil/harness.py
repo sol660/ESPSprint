@@ -44,6 +44,15 @@ def config_number(name, path=None):
     return value
 
 
+def upload_worst_case_s(path=None):
+    """Longest a wake can spend uploading, from include/config.h: every WiFi
+    network timing out, the NTP limit, then the HTTPS connect/handshake and the
+    response wait. 85 s with today's values."""
+    return (config_number("WIFI_MAX_NETWORKS", path) * config_number("WIFI_CONNECT_TIMEOUT_S", path)
+            + config_number("NTP_SYNC_TIMEOUT_MS", path) // 1000
+            + 2 * config_number("HTTP_TIMEOUT_MS", path) // 1000)
+
+
 def open_port(device):
     """Opens the board's port without pulsing reset (DTR/RTS low before open)."""
     import serial

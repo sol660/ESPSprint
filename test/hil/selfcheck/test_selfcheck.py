@@ -170,3 +170,20 @@ def test_timer_wake_sleep_limit_covers_the_worst_case_upload():
     module.__spec__.loader.exec_module(module)
     # 10 s reading + 2 x 30 s WiFi + 5 s NTP + 2 x 10 s HTTPS + 5 s spare.
     assert module.TIMER_WAKE_SLEEPS_WITHIN_S == 100
+
+
+def test_upload_worst_case_is_worked_out_from_config_h():
+    # 2 x 30 s WiFi + 5 s NTP + 2 x 10 s HTTPS.
+    assert harness.upload_worst_case_s() == 85
+
+
+def test_first_reply_limits_cover_the_power_on_upload():
+    def load(name):
+        module = importlib.util.module_from_spec(
+            importlib.util.spec_from_file_location(f"{name}_under_check", HELLO.parent / f"{name}.py"))
+        module.__spec__.loader.exec_module(module)
+        return module
+    sleep, hello, reading = load("test_sleep"), load("test_hello"), load("test_reading")
+    # 35 s first cycle (baseline + reading), 45 s with reply margin, plus 85 s upload.
+    assert sleep.FIRST_CYCLE_S == 120
+    assert sleep.FIRST_REPLY_WITHIN_S == hello.PONG_WITHIN_S == reading.FIRST_REPLY_WITHIN_S == 130
