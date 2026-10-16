@@ -13,6 +13,8 @@ capture must report the face it was asked for and one more face than the last,
 and the final read must say it was corrected.
 """
 
+import textwrap
+
 import pytest
 
 import harness
@@ -54,7 +56,7 @@ def test_six_faces_calibrate_the_board_to_1g(board, installer):
     start(board)
 
     for count, (face, instructions) in enumerate(FACES, start=1):
-        installer.do(instructions + f"\n(Face {count} of 6: {face} up. The capture takes ~25 s.)")
+        installer.do(textwrap.dedent(instructions).strip() + f"\n(Face {count} of 6: {face} up. The capture takes ~25 s.)")
         r = board.ask(f"cal {face}", "cal", CAL_WITHIN_S)
         assert r.fields.get("ok") == "1", (
             f"capture of face {face} failed ({r.fields.get('err')}): {r.line}")
