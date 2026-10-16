@@ -3,8 +3,8 @@
 // Template for include/secrets.h, which is git-ignored.
 // Copy this file to include/secrets.h and fill in real values
 // (supabase/SETUP.md says where to find the Supabase ones).
-// The board tests on the PC (test/hil) read SUPABASE_URL, SUPABASE_KEY and
-// DEVICE_ID from include/secrets.h too, so keep each on one line as below.
+// The board tests on the PC (test/hil) read SUPABASE_URL, SUPABASE_KEY,
+// DEVICE_ID and NTFY_TOPIC from include/secrets.h too, so keep each on one line as below.
 
 #include <cstddef>
 
@@ -46,7 +46,8 @@ constexpr size_t WIFI_NETWORK_COUNT = sizeof(WIFI_NETWORKS) / sizeof(WIFI_NETWOR
 constexpr const char* SUPABASE_URL = "https://your-project.supabase.co";
 constexpr const char* SUPABASE_KEY = "your-anon-or-publishable-key";
 
-// Hard to guess: anyone who knows the topic can read or post alerts.
+// ntfy topic for alerts (ntfy.sh). Hard to guess: anyone who knows it can read or
+// post alerts. Subscribe to it in the ntfy app (Android / iPhone).
 constexpr const char* NTFY_TOPIC = "landslide-change-me-to-something-random";
 
 constexpr const char* DEVICE_ID = "node-01";

@@ -56,6 +56,19 @@ def supabase():
 
 
 @pytest.fixture
+def ntfy():
+    """The ntfy topic the board alerts to, from include/secrets.h.
+
+    A topic not filled in is a FAIL, never a skip.
+    """
+    import ntfy_rest
+    try:
+        return ntfy_rest.from_secrets()
+    except ValueError as e:
+        pytest.fail(str(e))
+
+
+@pytest.fixture
 def board():
     """The plugged-in board. No board found is a FAIL, never a skip."""
     port = harness.open_port(harness.find_port())
