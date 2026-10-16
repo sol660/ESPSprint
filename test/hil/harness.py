@@ -28,6 +28,22 @@ def firmware_version():
     return m.group(1)
 
 
+def config_number(name, path=None):
+    """A whole-number `constexpr <type> NAME = <expr>;` from include/config.h.
+
+    <expr> may use digits, spaces and * (e.g. `30 * 1000`). Names set inside the
+    ESPSPRINT_HIL_TIMINGS #ifdef appear twice and are refused: use the test's
+    own copy of those.
+    """
+    text = Path(path or ROOT / "include" / "config.h").read_text(encoding="utf-8")
+    found = re.findall(r"constexpr\s+\w+\s+%s\s*=\s*([0-9 *]+?)\s*;" % re.escape(name), text)
+    assert len(found) == 1, f"{name}: expected one whole-number constexpr in config.h, found {len(found)}"
+    value = 1
+    for factor in found[0].split("*"):
+        value *= int(factor)
+    return value
+
+
 def open_port(device):
     """Opens the board's port without pulsing reset (DTR/RTS low before open)."""
     import serial

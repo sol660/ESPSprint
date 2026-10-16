@@ -22,8 +22,16 @@ BOOT_WITHIN_S = 5
 # take up to 35 s (25 s baseline + 10 s reading).
 FIRST_CYCLE_S = 35
 FIRST_REPLY_WITHIN_S = 45
-# A timer wake takes one reading (READING_TIME_LIMIT_MS, 10 s) and sleeps.
-TIMER_WAKE_SLEEPS_WITHIN_S = 15
+# A timer wake takes one reading and uploads it, then sleeps. Worst case (user
+# approval on #14, 2026-10-16), from include/config.h: the reading, every WiFi
+# network timing out, the NTP limit, and the HTTPS connect/handshake plus the
+# response wait, with 5 s to spare. 100 s with today's values.
+TIMER_WAKE_SLEEPS_WITHIN_S = (
+    harness.config_number("READING_TIME_LIMIT_MS") // 1000
+    + harness.config_number("WIFI_MAX_NETWORKS") * harness.config_number("WIFI_CONNECT_TIMEOUT_S")
+    + harness.config_number("NTP_SYNC_TIMEOUT_MS") // 1000
+    + 2 * harness.config_number("HTTP_TIMEOUT_MS") // 1000
+    + 5)
 # millis() runs off the crystal, so the window and idle times are accurate to
 # well under a second; 1 s allows for serial latency.
 EARLY_S = 1

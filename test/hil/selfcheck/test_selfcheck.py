@@ -152,3 +152,21 @@ def test_two_boards_fail_and_ask_for_esp_port():
 
     with pytest.raises(pytest.fail.Exception, match="ESP_PORT"):
         harness.find_port(ports, env={})
+
+
+def test_config_numbers_are_read_from_config_h():
+    assert harness.config_number("WIFI_CONNECT_TIMEOUT_S") == 30
+    assert harness.config_number("READING_TIME_LIMIT_MS") == 10000  # written `10 * 1000`
+
+
+def test_config_number_refuses_a_value_set_twice_for_the_hil_build():
+    with pytest.raises(AssertionError):
+        harness.config_number("NORMAL_INTERVAL_S")  # differs in the esp32dev_hil build
+
+
+def test_timer_wake_sleep_limit_covers_the_worst_case_upload():
+    module = importlib.util.module_from_spec(
+        importlib.util.spec_from_file_location("sleep_under_check", HELLO.parent / "test_sleep.py"))
+    module.__spec__.loader.exec_module(module)
+    # 10 s reading + 2 x 30 s WiFi + 5 s NTP + 2 x 10 s HTTPS + 5 s spare.
+    assert module.TIMER_WAKE_SLEEPS_WITHIN_S == 100
