@@ -150,6 +150,7 @@ CommandResult runCommand(Command cmd, RtcState& state, const CycleConfig& cfg, P
 // `read` command; only the open-ended network waits are polled.
 // The `alert` command runs the same way (start(Command::Alert, ...)): join,
 // sync, then send the test message and turn the radio off.
+// (The name is from #19: it runs both network commands, `wifi` and `alert`.)
 class WifiCommand {
  public:
   void start(uint32_t testTag, Ports& ports) { start(Command::Wifi, testTag, ports); }
@@ -159,6 +160,8 @@ class WifiCommand {
   bool poll(RtcState& state, const CycleConfig& cfg, Ports& ports);
   bool busy() const { return step_ == Step::Joining || step_ == Step::Syncing; }
   const CommandResult& result() const { return result_; }
+  // Which command is running (or last ran): Command::Wifi or Command::Alert.
+  Command command() const { return cmd_; }
 
  private:
   enum class Step : uint8_t { Idle, Joining, Syncing, Done };

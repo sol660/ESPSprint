@@ -14,6 +14,14 @@ size_t appendReading(const Reading& r, char* out, size_t size, size_t pos) {
   return n < 0 ? pos : pos + static_cast<size_t>(n);
 }
 
+// The `tag=` value: the test tag, or `none` for a real reading or alert.
+struct TagText {
+  char text[12] = "none";
+  explicit TagText(uint32_t testTag) {
+    if (isTestTag(testTag)) std::snprintf(text, sizeof text, "%lu", static_cast<unsigned long>(testTag));
+  }
+};
+
 }  // namespace
 
 void formatReadReply(const CommandResult& r, char* out, size_t size) {
@@ -45,9 +53,8 @@ void formatBootLine(const BootInfo& b, char* out, size_t size) {
 
 void formatUploadLine(const Reading& r, bool ok, char* out, size_t size) {
   if (size == 0) return;
-  char tag[12] = "none";
-  if (r.testTag != 0) std::snprintf(tag, sizeof tag, "%lu", static_cast<unsigned long>(r.testTag));
-  std::snprintf(out, size, "@upload ok=%d tag=%s seq=%lu boot=%lu", ok ? 1 : 0, tag,
+  const TagText tag(r.testTag);
+  std::snprintf(out, size, "@upload ok=%d tag=%s seq=%lu boot=%lu", ok ? 1 : 0, tag.text,
                 static_cast<unsigned long>(r.seq), static_cast<unsigned long>(r.bootCount));
 }
 
@@ -58,8 +65,7 @@ void formatSleepLine(uint32_t timerS, char* out, size_t size) {
 
 void formatAlertLine(const Alert& a, bool ok, char* out, size_t size) {
   if (size == 0) return;
-  char tag[12] = "none";
-  if (a.testTag != 0) std::snprintf(tag, sizeof tag, "%lu", static_cast<unsigned long>(a.testTag));
-  std::snprintf(out, size, "@alert ok=%d tag=%s level=%s tilt=%.3f", ok ? 1 : 0, tag,
+  const TagText tag(a.testTag);
+  std::snprintf(out, size, "@alert ok=%d tag=%s level=%s tilt=%.3f", ok ? 1 : 0, tag.text,
                 levelName(a.level), static_cast<double>(a.tiltDeg));
 }

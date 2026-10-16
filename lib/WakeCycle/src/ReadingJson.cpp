@@ -169,7 +169,7 @@ size_t encodeReadingJson(const Reading& r, const UploadHealth& h, char* out, siz
   o.key("batt_v");
   o.printf("null");
   o.key("test_tag");
-  if (r.testTag != 0) {
+  if (isTestTag(r.testTag)) {
     o.printf("\"%lu\"", static_cast<unsigned long>(r.testTag));
   } else {
     o.printf("null");

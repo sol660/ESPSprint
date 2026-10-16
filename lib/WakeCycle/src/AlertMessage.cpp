@@ -8,7 +8,7 @@
 namespace {
 
 void formatTime(uint32_t ts, char* out, size_t size) {
-  if (ts > config::CLOCK_VALID_AFTER_UTC) {
+  if (isUtcValid(ts)) {
     char iso[24];
     formatUtcIso8601(ts, iso, sizeof iso);
     std::snprintf(out, size, "Time %s", iso);
@@ -23,7 +23,7 @@ void formatAlertMessage(const Alert& a, const char* deviceId, char* out, size_t 
   if (size == 0) return;
   char time[48];
   formatTime(a.ts, time, sizeof time);
-  if (a.testTag != 0) {
+  if (isTestTag(a.testTag)) {
     std::snprintf(out, size,
                   "%s\n"
                   "Test number %lu from %s\n"
@@ -43,11 +43,11 @@ void formatAlertMessage(const Alert& a, const char* deviceId, char* out, size_t 
 void formatAlertTitle(const Alert& a, const char* deviceId, char* out, size_t size) {
   if (size == 0) return;
   std::snprintf(out, size, "Landslide monitor %s: %s", deviceId,
-                a.testTag != 0 ? "TEST" : levelName(a.level));
+                isTestTag(a.testTag) ? "TEST" : levelName(a.level));
 }
 
 int alertPriority(const Alert& a) {
-  if (a.testTag != 0) return 3;
+  if (isTestTag(a.testTag)) return 3;
   switch (a.level) {
     case Level::Alert:
       return 5;

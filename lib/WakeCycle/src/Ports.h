@@ -6,6 +6,8 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "config.h"
+
 struct ImuSample {
   float ax, ay, az;  // g
   float gx, gy, gz;  // deg/s
@@ -36,6 +38,10 @@ inline const char* levelName(Level l) {
   }
   return "OK";
 }
+// A Reading or Alert with a non-zero testTag comes from the `wifi` or `alert`
+// command; 0 means a real one.
+inline bool isTestTag(uint32_t testTag) { return testTag != 0; }
+
 enum class Trigger : uint8_t { Scheduled, Motion, Recheck, Event };
 enum class ReadingEvent : uint8_t { None, Shock, SensorError };
 
@@ -77,6 +83,11 @@ class Imu {
 // from loop() (CLAUDE.md: no blocking waits in loop()).
 enum class Progress : uint8_t { Pending, Done, Failed };
 
+// True once a UTC time is past config::CLOCK_VALID_AFTER_UTC. After a power loss
+// the ESP32 clock counts from 1970 until the first time sync, so a smaller value
+// is time since power-on, not a date.
+inline bool isUtcValid(uint32_t utc) { return utc > config::CLOCK_VALID_AFTER_UTC; }
+
 class Clock {
  public:
   virtual ~Clock() = default;
@@ -88,7 +99,10 @@ class Clock {
   // Pending until the time is set (Done) or its time limit passes (Failed).
   virtual void startSync() = 0;
   virtual Progress pollSync() = 0;
-  // The same, waiting until it finishes. For the wake cycle in setup() only.
+  // The same, waiting until it finishes (up to the time limits: WIFI_CONNECT_TIMEOUT_S
+  // per network for connect, NTP_SYNC_TIMEOUT_MS for sync). Only for the wake cycle in setup() and the blocking
+  // runCommand(); never from loop(). The spin doesn't hog the CPU: the real
+  // pollConnect()/pollSync() give it up for a tick while Pending.
   virtual bool sync() {
     startSync();
     Progress p;
@@ -136,7 +150,10 @@ class Uplink {
   // this wake, a normal result, not an error).
   virtual void startConnect() = 0;
   virtual Progress pollConnect() = 0;
-  // The same, waiting until it finishes. For the wake cycle in setup() only.
+  // The same, waiting until it finishes (up to the time limits: WIFI_CONNECT_TIMEOUT_S
+  // per network for connect, NTP_SYNC_TIMEOUT_MS for sync). Only for the wake cycle in setup() and the blocking
+  // runCommand(); never from loop(). The spin doesn't hog the CPU: the real
+  // pollConnect()/pollSync() give it up for a tick while Pending.
   virtual bool connect() {
     startConnect();
     Progress p;

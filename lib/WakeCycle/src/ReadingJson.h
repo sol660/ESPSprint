@@ -23,5 +23,10 @@ struct UploadHealth {
 // NaN values become null; batt_v is always null (no battery sensing yet).
 size_t encodeReadingJson(const Reading& r, const UploadHealth& h, char* out, size_t size);
 
+// A buffer this size (terminating NUL included) holds any row with every number
+// at its longest and the device id, fw and reset reason at their usual lengths
+// (a full row is about 520 characters). A longer row is refused (0), never cut.
+constexpr size_t READING_JSON_BUF_SIZE = 640;
+
 // `YYYY-MM-DDThh:mm:ssZ` for UTC seconds since 1970.
 void formatUtcIso8601(uint32_t utc, char* out, size_t size);

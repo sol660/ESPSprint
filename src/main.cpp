@@ -14,9 +14,8 @@ static WakeResult wake;
 // Replaced in setup() with this boot's real cause and start time.
 static CommandWindow window(WakeCause::Timer, 0, CycleConfig{});
 // The `wifi` and `alert` commands run across loop() calls, so loop() never
-// waits on WiFi. netCommand says which one is running.
+// waits on WiFi. wifiCommand.command() says which one is running.
 static WifiCommand wifiCommand;
-static Command netCommand = Command::Wifi;
 
 static void printReading(const Reading& r) {
   Serial.printf("tilt delta pitch %+.3f roll %+.3f deg | raw pitch %+.3f roll %+.3f | noise %.4f g | %s\n",
@@ -40,6 +39,16 @@ static void printAlert(const Alert& a, bool ok) {
 
 // A random 9-digit number for `wifi` and `alert` without one.
 static uint32_t randomTag() { return 100000000UL + esp_random() % 900000000UL; }
+
+// Matches `<name>` or `<name> <n>` and gives the tag: <n> (board tests pass their
+// own random number), or a random 9-digit one when there is none.
+static bool parseTaggedCommand(const char* line, const char* name, uint32_t& testTag) {
+  const size_t n = strlen(name);
+  if (strncmp(line, name, n) != 0 || (line[n] != '\0' && line[n] != ' ')) return false;
+  testTag = line[n] == ' ' ? strtoul(line + n + 1, nullptr, 10) : 0;
+  if (!isTestTag(testTag)) testTag = randomTag();
+  return true;
+}
 
 static void printCommandResult(Command cmd, const CommandResult& r) {
   if (cmd == Command::Alert) {
@@ -82,19 +91,13 @@ static void handleCommand(const char* line) {
 
   Command cmd;
   uint32_t testTag = 0;
-  if (strcmp(line, "wifi") == 0 || strncmp(line, "wifi ", 5) == 0) {
-    // `wifi <n>` tags the test row with <n> (board tests pass their own random
-    // number); plain `wifi` picks a random 9-digit tag.
+  if (parseTaggedCommand(line, "wifi", testTag)) {
+    // `wifi [n]` tags the test row (Supabase test_tag) with the number.
     cmd = Command::Wifi;
-    testTag = line[4] == ' ' ? strtoul(line + 5, nullptr, 10) : 0;
-    if (testTag == 0) testTag = randomTag();
     Serial.println("wifi: connecting, then reading and uploading (up to ~90 s)...");
-  } else if (strcmp(line, "alert") == 0 || strncmp(line, "alert ", 6) == 0) {
-    // `alert <n>` sends a ntfy test message with <n> (board tests pass their
-    // own random number); plain `alert` picks a random 9-digit one.
+  } else if (parseTaggedCommand(line, "alert", testTag)) {
+    // `alert [n]` sends a ntfy test message with the number.
     cmd = Command::Alert;
-    testTag = line[5] == ' ' ? strtoul(line + 6, nullptr, 10) : 0;
-    if (testTag == 0) testTag = randomTag();
     Serial.printf("alert: connecting, then sending test alert %lu to ntfy (up to ~80 s)...\n",
                   static_cast<unsigned long>(testTag));
   } else if (strcmp(line, "read") == 0) {
@@ -111,7 +114,6 @@ static void handleCommand(const char* line) {
   }
 
   if (cmd == Command::Wifi || cmd == Command::Alert) {
-    netCommand = cmd;
     wifiCommand.start(cmd, testTag, hw.ports);  // loop() polls it until it is done
     window.commandStarted();
     return;
@@ -149,7 +151,7 @@ void loop() {
   if (wifiCommand.busy()) {
     // Polled, never waited on. Typed input waits in the UART buffer meanwhile.
     if (wifiCommand.poll(rtcState, CycleConfig{}, hw.ports)) {
-      printCommandResult(netCommand, wifiCommand.result());
+      printCommandResult(wifiCommand.command(), wifiCommand.result());
       window.commandHandled(millis());
     }
     return;

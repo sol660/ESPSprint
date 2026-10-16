@@ -27,7 +27,7 @@
 
 uint32_t Esp32Clock::nowUtc() { return static_cast<uint32_t>(time(nullptr)); }
 // After a power loss the clock restarts at 1970 until the first NTP sync.
-bool Esp32Clock::isSynced() { return nowUtc() > config::CLOCK_VALID_AFTER_UTC; }
+bool Esp32Clock::isSynced() { return isUtcValid(nowUtc()); }
 uint32_t Esp32Clock::uptimeMs() { return millis(); }
 
 void Esp32Clock::startSync() {  // needs WiFi up
@@ -41,7 +41,10 @@ Progress Esp32Clock::pollSync() {
     log_i("time synced: %lu", static_cast<unsigned long>(nowUtc()));
     return Progress::Done;
   }
-  if (millis() - syncStartMs_ < config::NTP_SYNC_TIMEOUT_MS) return Progress::Pending;
+  if (millis() - syncStartMs_ < config::NTP_SYNC_TIMEOUT_MS) {
+    vTaskDelay(1);  // let other tasks run while a caller spins on this (Clock::sync)
+    return Progress::Pending;
+  }
   log_w("NTP sync timed out after %lu ms", static_cast<unsigned long>(config::NTP_SYNC_TIMEOUT_MS));
   return Progress::Failed;
 }
@@ -82,6 +85,34 @@ const char* resetReasonName() {
   }
 }
 
+// One HTTPS POST of body to url, with the server certificate checked against
+// the roots in RootCa.h (no setInsecure()) and every wait capped at
+// HTTP_TIMEOUT_MS. addHeaders(http) adds the request's headers; isOk(code)
+// says which HTTP status counts as accepted. Failures are logged with `what`.
+template <typename AddHeaders, typename IsOk>
+bool httpsPost(const char* what, const String& url, const uint8_t* body, size_t len,
+               AddHeaders addHeaders, IsOk isOk) {
+  WiFiClientSecure tls;
+  tls.setCACert(root_ca::HTTPS_ROOTS);
+  tls.setHandshakeTimeout(config::HTTP_TIMEOUT_MS / 1000);  // seconds; the default is 120
+  HTTPClient http;
+  http.setTimeout(config::HTTP_TIMEOUT_MS);
+  http.setConnectTimeout(config::HTTP_TIMEOUT_MS);
+  if (!http.begin(tls, url)) {
+    log_e("bad URL for %s: %s", what, url.c_str());
+    return false;
+  }
+  addHeaders(http);
+  const int code = http.POST(const_cast<uint8_t*>(body), len);
+  const bool ok = isOk(code);
+  if (!ok) {
+    log_e("%s failed: HTTP %d %s", what, code,
+          code > 0 ? http.getString().c_str() : http.errorToString(code).c_str());
+  }
+  http.end();
+  return ok;
+}
+
 }  // namespace
 
 void Esp32Uplink::startConnect() {
@@ -115,7 +146,10 @@ Progress Esp32Uplink::pollConnect() {
     log_i("WiFi: joined %s, RSSI %d dBm", net.ssid, WiFi.RSSI());
     return Progress::Done;
   }
-  if (millis() - networkStartMs_ < config::WIFI_CONNECT_TIMEOUT_S * 1000UL) return Progress::Pending;
+  if (millis() - networkStartMs_ < config::WIFI_CONNECT_TIMEOUT_S * 1000UL) {
+    vTaskDelay(1);  // let the WiFi task run while a caller spins on this (Uplink::connect)
+    return Progress::Pending;
+  }
 
   log_w("WiFi: %s not joined within %lu s", net.ssid,
         static_cast<unsigned long>(config::WIFI_CONNECT_TIMEOUT_S));
@@ -136,9 +170,9 @@ bool Esp32Uplink::sendReadings(const Reading* readings, size_t count) {
   const UploadHealth health{secrets::DEVICE_ID, config::FW_VERSION, resetReasonName(), true,
                             static_cast<int>(WiFi.RSSI())};
   String body;
-  body.reserve(count * 520 + 2);
+  body.reserve(count * READING_JSON_BUF_SIZE + 2);  // rows, commas (the NUL's place) and []
   body += '[';
-  char row[640];
+  char row[READING_JSON_BUF_SIZE];
   for (size_t i = 0; i < count; ++i) {
     if (encodeReadingJson(readings[i], health, row, sizeof row) == 0) {
       log_e("reading %lu too long to encode", static_cast<unsigned long>(readings[i].seq));
@@ -149,34 +183,20 @@ bool Esp32Uplink::sendReadings(const Reading* readings, size_t count) {
   }
   body += ']';
 
-  // The server certificate must chain to one of the roots in RootCa.h.
-  WiFiClientSecure tls;
-  tls.setCACert(root_ca::HTTPS_ROOTS);
-  tls.setHandshakeTimeout(config::HTTP_TIMEOUT_MS / 1000);  // seconds; the default is 120
-  HTTPClient http;
-  http.setTimeout(config::HTTP_TIMEOUT_MS);
-  http.setConnectTimeout(config::HTTP_TIMEOUT_MS);
-  String url = String(secrets::SUPABASE_URL) + config::SUPABASE_READINGS_PATH;
-  if (!http.begin(tls, url)) {
-    log_e("bad Supabase URL: %s", url.c_str());
-    return false;
-  }
-  http.addHeader("Content-Type", "application/json");
-  http.addHeader("Prefer", "return=minimal");
-  http.addHeader("apikey", secrets::SUPABASE_KEY);
-  // Legacy anon keys are JWTs and also go in Authorization; new publishable
-  // keys (sb_publishable_...) go in apikey only.
-  if (strncmp(secrets::SUPABASE_KEY, "eyJ", 3) == 0) {
-    http.addHeader("Authorization", String("Bearer ") + secrets::SUPABASE_KEY);
-  }
-  const int code = http.POST(body);
-  const bool ok = code == 201 || code == 200 || code == 204;
-  if (!ok) {
-    log_e("Supabase insert failed: HTTP %d %s", code,
-          code > 0 ? http.getString().c_str() : http.errorToString(code).c_str());
-  }
-  http.end();
-  return ok;
+  const String url = String(secrets::SUPABASE_URL) + config::SUPABASE_READINGS_PATH;
+  return httpsPost(
+      "Supabase insert", url, reinterpret_cast<const uint8_t*>(body.c_str()), body.length(),
+      [](HTTPClient& http) {
+        http.addHeader("Content-Type", "application/json");
+        http.addHeader("Prefer", "return=minimal");
+        http.addHeader("apikey", secrets::SUPABASE_KEY);
+        // Legacy anon keys are JWTs and also go in Authorization; new publishable
+        // keys (sb_publishable_...) go in apikey only.
+        if (strncmp(secrets::SUPABASE_KEY, "eyJ", 3) == 0) {
+          http.addHeader("Authorization", String("Bearer ") + secrets::SUPABASE_KEY);
+        }
+      },
+      [](int code) { return code == 201 || code == 200 || code == 204; });
 }
 
 // ntfy (spec #1 "Alerts"): one HTTPS POST of the message to the secret topic,
@@ -188,29 +208,16 @@ bool Esp32Uplink::sendAlert(const Alert& alert) {
   formatAlertMessage(alert, secrets::DEVICE_ID, body, sizeof body);
   formatAlertTitle(alert, secrets::DEVICE_ID, title, sizeof title);
 
-  WiFiClientSecure tls;
-  tls.setCACert(root_ca::HTTPS_ROOTS);
-  tls.setHandshakeTimeout(config::HTTP_TIMEOUT_MS / 1000);  // seconds; the default is 120
-  HTTPClient http;
-  http.setTimeout(config::HTTP_TIMEOUT_MS);
-  http.setConnectTimeout(config::HTTP_TIMEOUT_MS);
-  String url = String(config::NTFY_SERVER) + "/" + secrets::NTFY_TOPIC;
-  if (!http.begin(tls, url)) {
-    log_e("bad ntfy URL: %s", url.c_str());
-    return false;
-  }
-  http.addHeader("Content-Type", "text/plain; charset=utf-8");
-  http.addHeader("Title", title);
-  http.addHeader("Priority", String(alertPriority(alert)));
-  http.addHeader("Tags", alert.testTag != 0 ? "test_tube" : "warning");
-  const int code = http.POST(reinterpret_cast<uint8_t*>(body), strlen(body));
-  const bool ok = code == 200;
-  if (!ok) {
-    log_e("ntfy send failed: HTTP %d %s", code,
-          code > 0 ? http.getString().c_str() : http.errorToString(code).c_str());
-  }
-  http.end();
-  return ok;
+  const String url = String(config::NTFY_SERVER) + "/" + secrets::NTFY_TOPIC;
+  return httpsPost(
+      "ntfy send", url, reinterpret_cast<const uint8_t*>(body), strlen(body),
+      [&](HTTPClient& http) {
+        http.addHeader("Content-Type", "text/plain; charset=utf-8");
+        http.addHeader("Title", title);
+        http.addHeader("Priority", String(alertPriority(alert)));
+        http.addHeader("Tags", isTestTag(alert.testTag) ? "test_tube" : "warning");
+      },
+      [](int code) { return code == 200; });
 }
 
 void Esp32CamTrigger::pulse() { log_w("CAM pulse requested (not wired yet)"); }
