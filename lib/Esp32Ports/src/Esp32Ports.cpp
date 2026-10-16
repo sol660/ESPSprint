@@ -10,6 +10,7 @@
 #include <esp_wpa2.h>
 #include <time.h>
 
+#include "AlertMessage.h"
 #include "ReadingJson.h"
 #include "RootCa.h"
 #include "config.h"
@@ -50,12 +51,6 @@ bool Esp32Store::bufferPush(const Reading&) { return false; }
 size_t Esp32Store::bufferCount() { return 0; }
 bool Esp32Store::bufferPeek(size_t, Reading&) { return false; }
 void Esp32Store::bufferDrop(size_t) {}
-bool Esp32Store::loadPendingAlert(Alert&) { return false; }
-bool Esp32Store::savePendingAlert(const Alert&) { return false; }
-void Esp32Store::clearPendingAlert() {}
-
-bool Esp32Uplink::sendAlert(const Alert&) { return false; }  // ntfy: #20
-
 // ---- Esp32Uplink: WiFi + Supabase REST ----
 
 namespace {
@@ -184,6 +179,40 @@ bool Esp32Uplink::sendReadings(const Reading* readings, size_t count) {
   return ok;
 }
 
+// ntfy (spec #1 "Alerts"): one HTTPS POST of the message to the secret topic,
+// with the certificate checked against RootCa.h (ISRG Root X1 for ntfy.sh).
+bool Esp32Uplink::sendAlert(const Alert& alert) {
+  if (WiFi.status() != WL_CONNECTED) return false;
+  char body[256];
+  char title[80];
+  formatAlertMessage(alert, secrets::DEVICE_ID, body, sizeof body);
+  formatAlertTitle(alert, secrets::DEVICE_ID, title, sizeof title);
+
+  WiFiClientSecure tls;
+  tls.setCACert(root_ca::HTTPS_ROOTS);
+  tls.setHandshakeTimeout(config::HTTP_TIMEOUT_MS / 1000);  // seconds; the default is 120
+  HTTPClient http;
+  http.setTimeout(config::HTTP_TIMEOUT_MS);
+  http.setConnectTimeout(config::HTTP_TIMEOUT_MS);
+  String url = String(config::NTFY_SERVER) + "/" + secrets::NTFY_TOPIC;
+  if (!http.begin(tls, url)) {
+    log_e("bad ntfy URL: %s", url.c_str());
+    return false;
+  }
+  http.addHeader("Content-Type", "text/plain; charset=utf-8");
+  http.addHeader("Title", title);
+  http.addHeader("Priority", String(alertPriority(alert)));
+  http.addHeader("Tags", alert.testTag != 0 ? "test_tube" : "warning");
+  const int code = http.POST(reinterpret_cast<uint8_t*>(body), strlen(body));
+  const bool ok = code == 200;
+  if (!ok) {
+    log_e("ntfy send failed: HTTP %d %s", code,
+          code > 0 ? http.getString().c_str() : http.errorToString(code).c_str());
+  }
+  http.end();
+  return ok;
+}
+
 void Esp32CamTrigger::pulse() { log_w("CAM pulse requested (not wired yet)"); }
 
 void Esp32Sleeper::sleep(uint32_t timerS, bool motionWake) {
@@ -298,6 +327,36 @@ bool Esp32Imu::resetBus() {  // full bus recovery: #7
 namespace {
 constexpr const char* KEY_BASELINE = "baseline";
 constexpr const char* KEY_BOOT_COUNT = "boots";
+constexpr const char* KEY_PENDING_ALERT = "alert";  // an Alert not yet delivered to ntfy
+}
+
+bool Esp32Store::loadPendingAlert(Alert& out) {
+  Preferences prefs;
+  if (!prefs.begin(ns_, true)) return false;  // read-only; fails if never written
+  // isKey first: getBytesLength logs an error for a missing key, the usual case.
+  const bool ok = prefs.isKey(KEY_PENDING_ALERT) &&
+                  prefs.getBytesLength(KEY_PENDING_ALERT) == sizeof(Alert) &&
+                  prefs.getBytes(KEY_PENDING_ALERT, &out, sizeof(Alert)) == sizeof(Alert);
+  prefs.end();
+  return ok;
+}
+
+bool Esp32Store::savePendingAlert(const Alert& a) {
+  Preferences prefs;
+  if (!prefs.begin(ns_, false)) return false;
+  const bool ok = prefs.putBytes(KEY_PENDING_ALERT, &a, sizeof a) == sizeof a;
+  prefs.end();
+  if (!ok) log_e("pending alert save to flash failed: it is lost if this wake can't send it");
+  return ok;
+}
+
+void Esp32Store::clearPendingAlert() {
+  Preferences prefs;
+  if (!prefs.begin(ns_, false)) return;
+  if (prefs.isKey(KEY_PENDING_ALERT) && !prefs.remove(KEY_PENDING_ALERT)) {
+    log_e("pending alert clear failed: it may be sent again");
+  }
+  prefs.end();
 }
 
 bool Esp32Store::loadBootCount(uint32_t& out) {

@@ -110,8 +110,11 @@ WakeResult runWakeCycle(WakeCause cause, RtcState& state, const CycleConfig& cfg
 // this does the work.
 // Wifi: connect, sync the time, take a reading and upload it tagged with testTag
 // (Supabase test_tag), so the installer and the board test can find that row.
+// Alert: connect, sync the time and send a ntfy test message carrying testTag
+// and "TEST — not a real alert" (spec #14 story 52). No reading, no upload; a
+// test that fails is reported, never kept for retry.
 // No other command uses WiFi.
-enum class Command : uint8_t { Read, Baseline, Status, Wifi };
+enum class Command : uint8_t { Read, Baseline, Status, Wifi, Alert };
 
 struct CommandResult {
   bool ok = false;
@@ -120,10 +123,13 @@ struct CommandResult {
   Baseline baseline{};
   bool uploadTried = false;
   bool uploaded = false;
+  bool alertTried = false;  // print `@alert ok=` when set
+  bool alertSent = false;
+  Alert alert{};
 };
 
-// testTag is used by Command::Wifi only (non-zero). Command::Wifi waits here
-// until it is done; loop() uses WifiCommand instead, so it never blocks.
+// testTag is used by Command::Wifi and Command::Alert only (non-zero). Those
+// two wait here until done; loop() uses WifiCommand instead, so it never blocks.
 CommandResult runCommand(Command cmd, RtcState& state, const CycleConfig& cfg, Ports& ports,
                          uint32_t testTag = 0);
 
@@ -134,9 +140,13 @@ CommandResult runCommand(Command cmd, RtcState& state, const CycleConfig& cfg, P
 // the radio off. Offline, it still reads and reports the failed upload.
 // The reading and the HTTPS post themselves take a few seconds each, as in the
 // `read` command; only the open-ended network waits are polled.
+// The `alert` command runs the same way (start(Command::Alert, ...)): join,
+// sync, then send the test message and turn the radio off.
 class WifiCommand {
  public:
-  void start(uint32_t testTag, Ports& ports);
+  void start(uint32_t testTag, Ports& ports) { start(Command::Wifi, testTag, ports); }
+  // cmd is Command::Wifi or Command::Alert.
+  void start(Command cmd, uint32_t testTag, Ports& ports);
   // True once the command has finished (also on the call that finishes it).
   bool poll(RtcState& state, const CycleConfig& cfg, Ports& ports);
   bool busy() const { return step_ == Step::Joining || step_ == Step::Syncing; }
@@ -147,6 +157,7 @@ class WifiCommand {
   void finish(bool connected, RtcState& state, const CycleConfig& cfg, Ports& ports);
 
   Step step_ = Step::Idle;
+  Command cmd_ = Command::Wifi;
   uint32_t testTag_ = 0;
   CommandResult result_{};
 };

@@ -297,9 +297,10 @@ CommandResult runCommand(Command cmd, RtcState& state, const CycleConfig& cfg, P
       result.reading = state.lastReading;
       result.ok = true;
       break;
-    case Command::Wifi: {
+    case Command::Wifi:
+    case Command::Alert: {
       WifiCommand wifi;
-      wifi.start(testTag, ports);
+      wifi.start(cmd, testTag, ports);
       while (!wifi.poll(state, cfg, ports)) {
       }
       result = wifi.result();
@@ -309,7 +310,8 @@ CommandResult runCommand(Command cmd, RtcState& state, const CycleConfig& cfg, P
   return result;
 }
 
-void WifiCommand::start(uint32_t testTag, Ports& ports) {
+void WifiCommand::start(Command cmd, uint32_t testTag, Ports& ports) {
+  cmd_ = cmd;
   testTag_ = testTag;
   result_ = CommandResult{};
   step_ = Step::Joining;
@@ -347,6 +349,18 @@ bool WifiCommand::poll(RtcState& state, const CycleConfig& cfg, Ports& ports) {
 
 void WifiCommand::finish(bool connected, RtcState& state, const CycleConfig& cfg, Ports& ports) {
   CommandResult& r = result_;
+  if (cmd_ == Command::Alert) {
+    // The level the device is at and the latest reading's tilt, so the test
+    // message also shows the current state. Not saved to flash: a test that
+    // fails is reported now, never retried on later wakes.
+    r.alert = Alert{state.levels.level, state.lastReading.tiltDeg, ports.clock.nowUtc(), testTag_};
+    r.ok = true;
+    r.alertTried = true;
+    r.alertSent = connected && ports.uplink.sendAlert(r.alert);
+    ports.uplink.disconnect();
+    step_ = Step::Done;
+    return;
+  }
   r.hasBaseline = ports.store.loadBaseline(r.baseline);
   r.reading = readTiltDelta(cfg, ports, r.hasBaseline, r.baseline);
   stampReading(state, ports.clock, r.reading);

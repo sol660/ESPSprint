@@ -23,6 +23,19 @@ struct TempCalibration {
 };
 
 enum class Level : uint8_t { Ok, Watch, Alert };
+
+// OK, WATCH or ALERT: the name in tagged lines, uploads and alerts.
+inline const char* levelName(Level l) {
+  switch (l) {
+    case Level::Ok:
+      return "OK";
+    case Level::Watch:
+      return "WATCH";
+    case Level::Alert:
+      return "ALERT";
+  }
+  return "OK";
+}
 enum class Trigger : uint8_t { Scheduled, Motion, Recheck, Event };
 enum class ReadingEvent : uint8_t { None, Shock, SensorError };
 
@@ -48,7 +61,7 @@ struct Alert {
   Level level;     // the new level (for a test: the level the device is at)
   float tiltDeg;   // the tilt delta that raised it
   uint32_t ts;     // UTC seconds of the reading; before the first time sync, time since power-on
-  uint32_t testTag = 0;  // 0 = a real alert; else the `alert` command's number
+  uint32_t testTag;  // 0 = a real alert; else the `alert` command's number
 };
 
 class Imu {

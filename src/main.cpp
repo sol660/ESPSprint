@@ -13,8 +13,10 @@ static Esp32Ports hw;
 static WakeResult wake;
 // Replaced in setup() with this boot's real cause and start time.
 static CommandWindow window(WakeCause::Timer, 0, CycleConfig{});
-// The `wifi` command runs across loop() calls, so loop() never waits on WiFi.
+// The `wifi` and `alert` commands run across loop() calls, so loop() never
+// waits on WiFi. netCommand says which one is running.
 static WifiCommand wifiCommand;
+static Command netCommand = Command::Wifi;
 
 static void printReading(const Reading& r) {
   Serial.printf("tilt delta pitch %+.3f roll %+.3f deg | raw pitch %+.3f roll %+.3f | noise %.4f g | %s\n",
@@ -29,7 +31,23 @@ static void printUpload(const Reading& r, bool ok) {
   Serial.println(line);
 }
 
+// `@alert ok= tag= level= tilt=`. ok=0: not delivered.
+static void printAlert(const Alert& a, bool ok) {
+  char line[96];
+  formatAlertLine(a, ok, line, sizeof line);
+  Serial.println(line);
+}
+
+// A random 9-digit number for `wifi` and `alert` without one.
+static uint32_t randomTag() { return 100000000UL + esp_random() % 900000000UL; }
+
 static void printCommandResult(Command cmd, const CommandResult& r) {
+  if (cmd == Command::Alert) {
+    Serial.printf("test alert %lu %s\n", static_cast<unsigned long>(r.alert.testTag),
+                  r.alertSent ? "sent to ntfy" : "NOT sent (WiFi or ntfy failed)");
+    printAlert(r.alert, r.alertSent);
+    return;
+  }
   if (!r.ok) {
     Serial.println("failed (unit moving, or flash write error)");
   } else {
@@ -53,7 +71,7 @@ static void printCommandResult(Command cmd, const CommandResult& r) {
   if (r.uploadTried) printUpload(r.reading, r.uploaded);
 }
 
-// Handles one typed line. `wifi` only starts here; loop() finishes it.
+// Handles one typed line. `wifi` and `alert` only start here; loop() finishes them.
 static void handleCommand(const char* line) {
   // `ping <n>` echoes <n> as `@pong <n>`: board tests use it to prove a live reply.
   if (strncmp(line, "ping ", 5) == 0 && line[5] != '\0') {
@@ -69,8 +87,16 @@ static void handleCommand(const char* line) {
     // number); plain `wifi` picks a random 9-digit tag.
     cmd = Command::Wifi;
     testTag = line[4] == ' ' ? strtoul(line + 5, nullptr, 10) : 0;
-    if (testTag == 0) testTag = 100000000UL + esp_random() % 900000000UL;
+    if (testTag == 0) testTag = randomTag();
     Serial.println("wifi: connecting, then reading and uploading (up to ~90 s)...");
+  } else if (strcmp(line, "alert") == 0 || strncmp(line, "alert ", 6) == 0) {
+    // `alert <n>` sends a ntfy test message with <n> (board tests pass their
+    // own random number); plain `alert` picks a random 9-digit one.
+    cmd = Command::Alert;
+    testTag = line[5] == ' ' ? strtoul(line + 6, nullptr, 10) : 0;
+    if (testTag == 0) testTag = randomTag();
+    Serial.printf("alert: connecting, then sending test alert %lu to ntfy (up to ~80 s)...\n",
+                  static_cast<unsigned long>(testTag));
   } else if (strcmp(line, "read") == 0) {
     cmd = Command::Read;
   } else if (strcmp(line, "baseline") == 0) {
@@ -79,13 +105,14 @@ static void handleCommand(const char* line) {
   } else if (strcmp(line, "status") == 0) {
     cmd = Command::Status;
   } else {
-    Serial.println("commands: read, baseline, status, wifi [tag], ping <n>");
+    Serial.println("commands: read, baseline, status, wifi [tag], alert [n], ping <n>");
     window.commandHandled(millis());
     return;
   }
 
-  if (cmd == Command::Wifi) {
-    wifiCommand.start(testTag, hw.ports);  // loop() polls it until it is done
+  if (cmd == Command::Wifi || cmd == Command::Alert) {
+    netCommand = cmd;
+    wifiCommand.start(cmd, testTag, hw.ports);  // loop() polls it until it is done
     window.commandStarted();
     return;
   }
@@ -106,6 +133,7 @@ void setup() {
 
   wake = runWakeCycle(boot.cause, rtcState, CycleConfig{}, hw.ports);
   printReading(wake.reading);
+  if (wake.alertTried) printAlert(wake.alert, wake.alertSent);
   if (wake.uploadTried) printUpload(wake.reading, wake.uploaded);
 
   // Listening starts now, after the wake cycle, so the installer gets the whole
@@ -117,7 +145,7 @@ void loop() {
   if (wifiCommand.busy()) {
     // Polled, never waited on. Typed input waits in the UART buffer meanwhile.
     if (wifiCommand.poll(rtcState, CycleConfig{}, hw.ports)) {
-      printCommandResult(Command::Wifi, wifiCommand.result());
+      printCommandResult(netCommand, wifiCommand.result());
       window.commandHandled(millis());
     }
     return;

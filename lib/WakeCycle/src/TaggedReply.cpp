@@ -55,3 +55,11 @@ void formatSleepLine(uint32_t timerS, char* out, size_t size) {
   if (size == 0) return;
   std::snprintf(out, size, "@sleep s=%lu", static_cast<unsigned long>(timerS));
 }
+
+void formatAlertLine(const Alert& a, bool ok, char* out, size_t size) {
+  if (size == 0) return;
+  char tag[12] = "none";
+  if (a.testTag != 0) std::snprintf(tag, sizeof tag, "%lu", static_cast<unsigned long>(a.testTag));
+  std::snprintf(out, size, "@alert ok=%d tag=%s level=%s tilt=%.3f", ok ? 1 : 0, tag,
+                levelName(a.level), static_cast<double>(a.tiltDeg));
+}

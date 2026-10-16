@@ -54,9 +54,9 @@ class Esp32Store : public Store {
 };
 
 // WiFi (secrets::WIFI_NETWORKS in order: WPA2-Personal or WPA2-Enterprise PEAP)
-// + HTTPS POST to Supabase's REST API, with the server certificate checked
+// + HTTPS POST to Supabase's REST API and to ntfy, with the server certificate checked
 // against RootCa.h. Self-contained so it can be swapped for other WiFi code:
-// the core only sees connect / disconnect / sendReadings. Joining is polled
+// the core only sees connect / disconnect / sendReadings / sendAlert. Joining is polled
 // with millis(), never waited on with delay().
 class Esp32Uplink : public Uplink {
  public:

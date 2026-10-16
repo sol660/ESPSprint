@@ -23,3 +23,8 @@ void formatUploadLine(const Reading& r, bool ok, char* out, size_t size);
 
 // `@sleep s=<seconds>`, printed just before deep sleep with the timer wake set.
 void formatSleepLine(uint32_t timerS, char* out, size_t size);
+
+// `@alert ok=<0|1> tag=<n|none> level=<OK|WATCH|ALERT> tilt=<deg>` after each
+// notification attempt: the `alert` command (tag = its number) and wake alerts
+// (tag=none). ok=0: not delivered (a wake alert stays in flash for the next wake).
+void formatAlertLine(const Alert& a, bool ok, char* out, size_t size);

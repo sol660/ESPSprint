@@ -85,18 +85,6 @@ const char* triggerName(Trigger t) {
   return "scheduled";
 }
 
-const char* levelName(Level l) {
-  switch (l) {
-    case Level::Ok:
-      return "OK";
-    case Level::Watch:
-      return "WATCH";
-    case Level::Alert:
-      return "ALERT";
-  }
-  return "OK";
-}
-
 const char* eventName(ReadingEvent e) {
   switch (e) {
     case ReadingEvent::None:
