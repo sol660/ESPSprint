@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 namespace {
 
@@ -13,13 +14,19 @@ struct Window {
   double maxGyroStdDps;
 };
 
-// Reads one window of samples; false if the IMU ran out before it filled.
-bool readWindow(Imu& imu, uint16_t samples, Window& out) {
+// Reads one window of samples, each corrected with `cal` when given; false if
+// the IMU ran out before it filled.
+bool readWindow(Imu& imu, uint16_t samples, const AccelCalibration* cal, Window& out) {
   double sum[6] = {0, 0, 0, 0, 0, 0};
   double sumSq[6] = {0, 0, 0, 0, 0, 0};
   for (uint16_t i = 0; i < samples; ++i) {
     ImuSample s;
     if (!imu.readSample(s)) return false;
+    if (cal) {
+      s.ax = (s.ax - cal->offset[0]) / cal->scale[0];
+      s.ay = (s.ay - cal->offset[1]) / cal->scale[1];
+      s.az = (s.az - cal->offset[2]) / cal->scale[2];
+    }
     const double v[6] = {s.ax, s.ay, s.az, s.gx, s.gy, s.gz};
     for (int k = 0; k < 6; ++k) {
       sum[k] += v[k];
@@ -41,9 +48,11 @@ bool readWindow(Imu& imu, uint16_t samples, Window& out) {
   return true;
 }
 
-// Averages accepted (still) windows until it has `windows` of them or runs out of time.
+// Averages accepted (still) windows until it has `windows` of them or runs out of
+// time. Samples are corrected with `cal` when given. `meanOut`, when given, gets
+// the averaged acceleration (g) of the accepted windows.
 Reading measureTilt(const CycleConfig& cfg, uint8_t windows, uint32_t timeLimitMs, Imu& imu,
-                    Clock& clock) {
+                    Clock& clock, const AccelCalibration* cal, double* meanOut = nullptr) {
   const uint32_t startMs = clock.uptimeMs();
   double sum[3] = {0, 0, 0};
   double noiseSum = 0;
@@ -51,7 +60,7 @@ Reading measureTilt(const CycleConfig& cfg, uint8_t windows, uint32_t timeLimitM
   Window w;
   while (accepted < windows &&
          clock.uptimeMs() - startMs < timeLimitMs &&
-         readWindow(imu, cfg.windowSamples, w)) {
+         readWindow(imu, cfg.windowSamples, cal, w)) {
     if (w.maxAccelStdG > cfg.stillAccelStdG || w.maxGyroStdDps > cfg.stillGyroStdDps) continue;
     for (int k = 0; k < 3; ++k) sum[k] += w.mean[k];
     noiseSum += w.maxAccelStdG;
@@ -60,6 +69,10 @@ Reading measureTilt(const CycleConfig& cfg, uint8_t windows, uint32_t timeLimitM
 
   Reading r{};
   r.stable = accepted >= windows;
+  r.accelCalibrated = cal != nullptr;
+  if (meanOut) {
+    for (int k = 0; k < 3; ++k) meanOut[k] = accepted > 0 ? sum[k] / accepted : 0;
+  }
   if (accepted > 0) {
     r.noise = static_cast<float>(noiseSum / accepted);
     const double x = sum[0], y = sum[1], z = sum[2];  // direction only, so no need to divide
@@ -72,10 +85,16 @@ Reading measureTilt(const CycleConfig& cfg, uint8_t windows, uint32_t timeLimitM
   return r;
 }
 
+// The stored accelerometer calibration, or nullptr when there is none.
+const AccelCalibration* loadAccelCal(Store& store, AccelCalibration& buf) {
+  return store.loadAccelCalibration(buf) ? &buf : nullptr;
+}
+
 // Long average; saved only if the board was still throughout.
 bool captureBaseline(const CycleConfig& cfg, Ports& ports, Baseline& out) {
-  const Reading b =
-      measureTilt(cfg, cfg.baselineWindows, cfg.baselineTimeLimitMs, ports.imu, ports.clock);
+  AccelCalibration cal;
+  const Reading b = measureTilt(cfg, cfg.baselineWindows, cfg.baselineTimeLimitMs, ports.imu,
+                                ports.clock, loadAccelCal(ports.store, cal));
   if (!b.stable) return false;
   out = {b.pitchRaw, b.rollRaw};
   return ports.store.saveBaseline(out);
@@ -84,8 +103,9 @@ bool captureBaseline(const CycleConfig& cfg, Ports& ports, Baseline& out) {
 // Tilt delta against the baseline (the raw angle when there is none yet).
 Reading readTiltDelta(const CycleConfig& cfg, Ports& ports, bool haveBaseline,
                       const Baseline& baseline) {
-  Reading r =
-      measureTilt(cfg, cfg.windowsPerReading, cfg.readingTimeLimitMs, ports.imu, ports.clock);
+  AccelCalibration cal;
+  Reading r = measureTilt(cfg, cfg.windowsPerReading, cfg.readingTimeLimitMs, ports.imu,
+                          ports.clock, loadAccelCal(ports.store, cal));
   if (haveBaseline) {
     r.pitchDeg = r.pitchRaw - baseline.pitchDeg;
     r.rollDeg = r.rollRaw - baseline.rollDeg;
@@ -359,6 +379,7 @@ CommandResult runCommand(Command cmd, RtcState& state, const CycleConfig& cfg, P
       break;
     case Command::Status:
       result.hasBaseline = ports.store.loadBaseline(result.baseline);
+      result.hasAccelCalibration = ports.store.loadAccelCalibration(result.accelCalibration);
       result.reading = state.lastReading;
       result.ok = true;
       break;
@@ -437,4 +458,153 @@ void WifiCommand::finish(bool connected, RtcState& state, const CycleConfig& cfg
   ports.uplink.disconnect();
   state.lastReading = r.reading;
   step_ = Step::Done;
+}
+
+namespace {
+
+constexpr const char* CAL_FACE_NAMES[CAL_FACE_COUNT] = {"+x", "-x", "+y", "-y", "+z", "-z"};
+
+// Which axis a face points up (0 = x, 1 = y, 2 = z), and in which direction.
+int calAxis(CalFace face) { return static_cast<int>(face) / 2; }
+double calSign(CalFace face) { return static_cast<int>(face) % 2 == 0 ? 1.0 : -1.0; }
+
+uint8_t countFaces(uint8_t faces) {
+  uint8_t n = 0;
+  for (int i = 0; i < CAL_FACE_COUNT; ++i) n += (faces >> i) & 1u;
+  return n;
+}
+
+// Erases the baseline and restarts the step rule: both were against readings
+// with the old correction (see the Baseline command).
+bool restartBaseline(RtcState& state, Store& store) {
+  state.levels.hasPrevious = false;
+  return store.clearBaseline();
+}
+
+void captureCalFace(CalFace face, RtcState& state, const CycleConfig& cfg, Ports& ports,
+                    CalResult& r) {
+  double mean[3];
+  // Raw samples (no correction): the calibration is worked out from them.
+  const Reading m = measureTilt(cfg, cfg.baselineWindows, cfg.baselineTimeLimitMs, ports.imu,
+                                ports.clock, nullptr, mean);
+  r.hasMean = m.accelG > 0;
+  for (int k = 0; k < 3; ++k) r.mean[k] = static_cast<float>(mean[k]);
+  if (!m.stable) {
+    r.error = CalError::Moving;
+    return;
+  }
+  // The named axis must be the one pointing up: the largest, with the right sign.
+  const int axis = calAxis(face);
+  const double up = calSign(face) * mean[axis];
+  for (int k = 0; k < 3; ++k) {
+    if (up <= 0 || (k != axis && std::fabs(mean[k]) >= up)) {
+      r.error = CalError::WrongFace;
+      return;
+    }
+  }
+  const int i = static_cast<int>(face);
+  for (int k = 0; k < 3; ++k) state.cal.mean[i][k] = r.mean[k];
+  state.cal.faces |= static_cast<uint8_t>(1u << i);
+  r.ok = true;
+}
+
+void saveCalibration(RtcState& state, const CycleConfig& cfg, Store& store, CalResult& r) {
+  const uint8_t all = (1u << CAL_FACE_COUNT) - 1;
+  if (state.cal.faces != all) {
+    r.error = CalError::MissingFaces;
+    r.missingFaces = static_cast<uint8_t>(all & ~state.cal.faces);
+    return;
+  }
+  AccelCalibration& c = r.calibration;
+  bool inRange = true;
+  for (int k = 0; k < 3; ++k) {
+    const float up = state.cal.mean[2 * k][k];        // +axis face
+    const float down = state.cal.mean[2 * k + 1][k];  // -axis face
+    c.offset[k] = (up + down) / 2;
+    c.scale[k] = (up - down) / 2;
+    inRange = inRange && c.scale[k] >= cfg.calScaleMin && c.scale[k] <= cfg.calScaleMax &&
+              std::fabs(c.offset[k]) <= cfg.calOffsetMaxG;
+  }
+  r.hasCalibration = true;
+  if (!inRange) {
+    r.error = CalError::OutOfRange;
+    return;
+  }
+  if (!store.saveAccelCalibration(c)) {
+    r.error = CalError::Flash;
+    return;
+  }
+  r.baselineCleared = restartBaseline(state, store);
+  state.cal = CalCapture{};
+  r.ok = true;
+}
+
+}  // namespace
+
+bool parseCalArg(const char* arg, CalStep& step, CalFace& face) {
+  if (std::strcmp(arg, "save") == 0) {
+    step = CalStep::Save;
+    return true;
+  }
+  if (std::strcmp(arg, "clear") == 0) {
+    step = CalStep::Clear;
+    return true;
+  }
+  for (int i = 0; i < CAL_FACE_COUNT; ++i) {
+    if (std::strcmp(arg, CAL_FACE_NAMES[i]) == 0) {
+      step = CalStep::Face;
+      face = static_cast<CalFace>(i);
+      return true;
+    }
+  }
+  return false;
+}
+
+const char* calFaceName(CalFace face) {
+  const int i = static_cast<int>(face);
+  return i < CAL_FACE_COUNT ? CAL_FACE_NAMES[i] : "?";
+}
+
+const char* calErrorName(CalError error) {
+  switch (error) {
+    case CalError::None:
+      return "none";
+    case CalError::Moving:
+      return "moving";
+    case CalError::WrongFace:
+      return "wrong_face";
+    case CalError::MissingFaces:
+      return "missing_faces";
+    case CalError::OutOfRange:
+      return "out_of_range";
+    case CalError::Flash:
+      return "flash";
+  }
+  return "none";
+}
+
+CalResult runCalCommand(CalStep step, CalFace face, RtcState& state, const CycleConfig& cfg,
+                        Ports& ports) {
+  CalResult r;
+  r.step = step;
+  r.face = face;
+  switch (step) {
+    case CalStep::Face:
+      captureCalFace(face, state, cfg, ports, r);
+      break;
+    case CalStep::Save:
+      saveCalibration(state, cfg, ports.store, r);
+      break;
+    case CalStep::Clear:
+      state.cal = CalCapture{};
+      if (!ports.store.clearAccelCalibration()) {
+        r.error = CalError::Flash;
+        break;
+      }
+      r.baselineCleared = restartBaseline(state, ports.store);
+      r.ok = true;
+      break;
+  }
+  r.faceCount = countFaces(state.cal.faces);
+  return r;
 }

@@ -77,7 +77,7 @@ void test_read_reply_is_one_tagged_line() {
   formatReadReply(r, line, sizeof line);
 
   TEST_ASSERT_EQUAL_STRING(
-      "@read ok=1 pitch=7.000 roll=-15.000 tilt=16.553 stable=1 noise=0.00123 temp=23.5 g=0.9987",
+      "@read ok=1 pitch=7.000 roll=-15.000 tilt=16.553 stable=1 noise=0.00123 temp=23.5 g=0.9987 cal=0",
       line);
 }
 
@@ -93,7 +93,7 @@ void test_status_reply_shows_the_baseline_and_the_last_reading() {
 
   TEST_ASSERT_EQUAL_STRING(
       "@status ok=1 baseline=1 bpitch=3.000 broll=-5.250 pitch=7.000 roll=-15.000 tilt=16.553 "
-      "stable=1 noise=0.00123 temp=23.5 g=0.9987",
+      "stable=1 noise=0.00123 temp=23.5 g=0.9987 cal=0",
       line);
 }
 
@@ -106,7 +106,7 @@ void test_status_reply_without_a_baseline_says_so() {
 
   TEST_ASSERT_EQUAL_STRING(
       "@status ok=0 baseline=0 pitch=0.000 roll=0.000 tilt=0.000 stable=0 noise=0.00000 temp=0.0 "
-      "g=0.0000",
+      "g=0.0000 cal=0",
       line);
 }
 

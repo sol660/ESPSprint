@@ -17,6 +17,17 @@ struct LevelState {
   float prevRollDeg = 0;
 };
 
+// The six faces of the accelerometer calibration (#22): which axis points up.
+// Named +x, -x, +y, -y, +z, -z after the MPU6050's printed axis arrows.
+enum class CalFace : uint8_t { PosX, NegX, PosY, NegY, PosZ, NegZ };
+constexpr int CAL_FACE_COUNT = 6;
+
+// Face averages taken so far by `cal <face>`, until `cal save` uses them.
+struct CalCapture {
+  uint8_t faces = 0;  // bit i set: face i captured
+  float mean[CAL_FACE_COUNT][3] = {};  // raw averaged acceleration, g
+};
+
 // Kept across deep sleep in RTC memory.
 struct RtcState {
   uint32_t seq = 0;        // readings numbered since the last cold boot
@@ -28,6 +39,7 @@ struct RtcState {
   // with RTC memory on a power loss, so those few are then sent once more
   // (ntfy delivery is at-least-once in that rare case).
   uint8_t alertsUncleared = 0;
+  CalCapture cal{};  // lost on a power loss: the faces are then taken again
 };
 
 // What the boot banner (`@boot fw= boot= cause= seq=`) reports.
@@ -69,6 +81,9 @@ struct CycleConfig {
   float alertStepDeg = config::ALERT_STEP_DEG;
   float levelDropMarginDeg = config::LEVEL_DROP_MARGIN_DEG;
   size_t alertQueueLen = config::ALERT_QUEUE_LEN;
+  float calScaleMin = config::CAL_SCALE_MIN;
+  float calScaleMax = config::CAL_SCALE_MAX;
+  float calOffsetMaxG = config::CAL_OFFSET_MAX_G;
 };
 
 // When an awake board may go to sleep (spec #14 "Command window and sleep").
@@ -134,6 +149,8 @@ struct CommandResult {
   bool alertTried = false;  // print `@alert ok=` when set
   bool alertSent = false;
   Alert alert{};
+  bool hasAccelCalibration = false;  // `status`: the calibration stored in flash
+  AccelCalibration accelCalibration{};
 };
 
 // testTag is used by Command::Wifi and Command::Alert only (non-zero). Those
@@ -172,3 +189,43 @@ class WifiCommand {
   uint32_t testTag_ = 0;
   CommandResult result_{};
 };
+
+// The `cal` command (#22), six-position accelerometer calibration:
+//  - `cal <face>` (Face): with that axis pointing up and the board still,
+//    averages the raw samples (no stored correction) for as long as a
+//    baseline and keeps the average in RtcState::cal. Refused if the board
+//    moves or another axis is the one pointing up. Faces can be taken in
+//    any order and retaken.
+//  - `cal save` (Save): needs all six. Per axis, offset = (up + down) / 2 and
+//    scale = (up - down) / 2, each checked against CycleConfig's limits, then
+//    saved to flash. The baseline is erased (it was measured without the
+//    correction) and the step rule starts again; the faces are forgotten.
+//  - `cal clear` (Clear): erases the calibration and, for the same reason,
+//    the baseline.
+// Every reading afterwards corrects each sample before working out angles.
+enum class CalStep : uint8_t { Face, Save, Clear };
+enum class CalError : uint8_t { None, Moving, WrongFace, MissingFaces, OutOfRange, Flash };
+
+struct CalResult {
+  bool ok = false;
+  CalStep step = CalStep::Face;
+  CalFace face = CalFace::PosX;  // Face only
+  CalError error = CalError::None;
+  bool hasMean = false;  // Face: an average was measured (also on WrongFace)
+  float mean[3] = {0, 0, 0};
+  uint8_t faceCount = 0;    // faces captured, after this step
+  uint8_t missingFaces = 0;  // Save with MissingFaces: bit i = face i not captured
+  bool hasCalibration = false;  // Save: the calibration worked out (also when refused as OutOfRange)
+  AccelCalibration calibration{};
+  bool baselineCleared = false;
+};
+
+// `+x` ... `-z`, `save` or `clear`. face is set for a Face step only.
+bool parseCalArg(const char* arg, CalStep& step, CalFace& face);
+// `+x`, `-x`, `+y`, `-y`, `+z`, `-z`.
+const char* calFaceName(CalFace face);
+// `moving`, `wrong_face`, `missing_faces`, `out_of_range`, `flash` (`none` for None).
+const char* calErrorName(CalError error);
+
+CalResult runCalCommand(CalStep step, CalFace face, RtcState& state, const CycleConfig& cfg,
+                        Ports& ports);

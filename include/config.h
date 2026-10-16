@@ -83,6 +83,13 @@ constexpr uint32_t READING_TIME_LIMIT_MS = 10 * 1000;
 constexpr uint8_t BASELINE_WINDOWS = 20;
 constexpr uint32_t BASELINE_TIME_LIMIT_MS = 25 * 1000;
 constexpr float MOTION_WAKE_THRESHOLD_G = 0.1f;
+// Six-position accelerometer calibration (#22): `cal save` refuses a result
+// outside these, which means a face was captured wrongly or the sensor is
+// faulty. The MPU6050 datasheet allows +/-3 % scale and up to ~80 mg offset
+// per axis; these leave room for a poor module. (Not set by spec.)
+constexpr float CAL_SCALE_MIN = 0.7f;
+constexpr float CAL_SCALE_MAX = 1.3f;
+constexpr float CAL_OFFSET_MAX_G = 0.25f;
 
 // Shock photos are rate-limited so a windy night can't drain the battery.
 // Gap and pulse length are not set by the spec: placeholders to confirm.

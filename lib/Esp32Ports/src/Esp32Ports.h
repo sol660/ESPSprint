@@ -38,7 +38,11 @@ class Esp32Store : public Store {
   explicit Esp32Store(const char* ns = "espsprint") : ns_(ns) {}
   bool loadBaseline(Baseline& out) override;
   bool saveBaseline(const Baseline& b) override;
+  bool clearBaseline() override;
   bool loadCalibration(TempCalibration& out) override;
+  bool loadAccelCalibration(AccelCalibration& out) override;
+  bool saveAccelCalibration(const AccelCalibration& c) override;
+  bool clearAccelCalibration() override;
   bool loadBootCount(uint32_t& out) override;
   bool saveBootCount(uint32_t count) override;
   bool bufferPush(const Reading& r) override;

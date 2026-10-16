@@ -329,6 +329,7 @@ bool Esp32Imu::resetBus() {  // full bus recovery: #7
 
 namespace {
 constexpr const char* KEY_BASELINE = "baseline";
+constexpr const char* KEY_ACCEL_CAL = "accelcal";  // AccelCalibration from `cal save` (#22)
 constexpr const char* KEY_BOOT_COUNT = "boots";
 constexpr const char* KEY_ALERT_QUEUE = "alerts";  // Alerts not yet delivered to ntfy, oldest first
 constexpr const char* KEY_OLD_PENDING_ALERT = "alert";  // the first build's single pending Alert
@@ -466,5 +467,36 @@ bool Esp32Store::saveBaseline(const Baseline& b) {
   const bool ok =
       withPrefs(ns_, false, [&](Preferences& p) { return putBlob(p, KEY_BASELINE, &b, sizeof b); });
   if (!ok) log_e("baseline save to flash failed");
+  return ok;
+}
+
+// Removes `key` from the namespace. True when it is gone afterwards, also when
+// it was never there (a namespace that was never written can't open read-write
+// only if flash is faulty).
+static bool removeKey(const char* ns, const char* key) {
+  return withPrefs(ns, false, [&](Preferences& p) { return !p.isKey(key) || p.remove(key); });
+}
+
+bool Esp32Store::clearBaseline() {
+  const bool ok = removeKey(ns_, KEY_BASELINE);
+  if (!ok) log_e("baseline erase from flash failed");
+  return ok;
+}
+
+bool Esp32Store::loadAccelCalibration(AccelCalibration& out) {
+  return withPrefs(ns_, true,
+                   [&](Preferences& p) { return getBlob(p, KEY_ACCEL_CAL, &out, sizeof out); });
+}
+
+bool Esp32Store::saveAccelCalibration(const AccelCalibration& c) {
+  const bool ok =
+      withPrefs(ns_, false, [&](Preferences& p) { return putBlob(p, KEY_ACCEL_CAL, &c, sizeof c); });
+  if (!ok) log_e("accelerometer calibration save to flash failed");
+  return ok;
+}
+
+bool Esp32Store::clearAccelCalibration() {
+  const bool ok = removeKey(ns_, KEY_ACCEL_CAL);
+  if (!ok) log_e("accelerometer calibration erase from flash failed");
   return ok;
 }

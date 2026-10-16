@@ -24,6 +24,13 @@ struct TempCalibration {
   float rollPerC, rollAt0C;
 };
 
+// Six-position accelerometer calibration (#22): per axis (x, y, z),
+// corrected = (raw - offset) / scale. Not stored = no correction.
+struct AccelCalibration {
+  float offset[3];  // g
+  float scale[3];   // 1 = no gain error
+};
+
 enum class Level : uint8_t { Ok, Watch, Alert };
 
 // OK, WATCH or ALERT: the name in tagged lines, uploads and alerts.
@@ -60,6 +67,7 @@ struct Reading {
   Level level;
   ReadingEvent event;
   uint32_t testTag;  // 0 = a real reading; else the `wifi` command's tag (Supabase test_tag)
+  bool accelCalibrated;  // the samples were corrected with a stored AccelCalibration
 };
 
 // A notification that the level went up (or a test message: testTag != 0).
@@ -117,7 +125,11 @@ class Store {
   virtual ~Store() = default;
   virtual bool loadBaseline(Baseline& out) = 0;
   virtual bool saveBaseline(const Baseline& b) = 0;
+  virtual bool clearBaseline() = 0;  // true when none is stored afterwards
   virtual bool loadCalibration(TempCalibration& out) = 0;
+  virtual bool loadAccelCalibration(AccelCalibration& out) = 0;  // false: none stored
+  virtual bool saveAccelCalibration(const AccelCalibration& c) = 0;
+  virtual bool clearAccelCalibration() = 0;  // true when none is stored afterwards
   // Cold boots so far; false when none has been saved yet.
   virtual bool loadBootCount(uint32_t& out) = 0;
   virtual bool saveBootCount(uint32_t count) = 0;

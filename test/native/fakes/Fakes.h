@@ -117,9 +117,31 @@ class FakeStore : public Store {
     ++baselineSaves;
     return true;
   }
+  bool clearBaseline() override {
+    hasBaseline = false;
+    return true;
+  }
   bool loadCalibration(TempCalibration& out) override {
     if (hasCalibration) out = calibration;
     return hasCalibration;
+  }
+
+  bool hasAccelCalibration = false;
+  AccelCalibration accelCalibration{};
+  bool accelCalibrationSaveFails = false;  // flash error on `cal save`
+  bool loadAccelCalibration(AccelCalibration& out) override {
+    if (hasAccelCalibration) out = accelCalibration;
+    return hasAccelCalibration;
+  }
+  bool saveAccelCalibration(const AccelCalibration& c) override {
+    if (accelCalibrationSaveFails) return false;
+    accelCalibration = c;
+    hasAccelCalibration = true;
+    return true;
+  }
+  bool clearAccelCalibration() override {
+    hasAccelCalibration = false;
+    return true;
   }
   bool bufferPush(const Reading& r) override {
     buffer.push_back(r);

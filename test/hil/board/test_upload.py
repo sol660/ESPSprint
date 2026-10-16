@@ -17,9 +17,8 @@ import harness
 
 BOOT_WITHIN_S = 5
 # Before commands are read, the first wake cycle runs: up to 35 s of reading
-# (with no stored baseline) and its upload: up to 2 x 30 s of WiFi, 5 s NTP,
-# 10 s HTTPS.
-FIRST_REPLY_WITHIN_S = 35 + 75 + 10
+# (with no stored baseline) and its upload (WiFi, NTP and HTTPS limits from config.h).
+FIRST_REPLY_WITHIN_S = 35 + harness.upload_worst_case_s()
 # `wifi`: up to 2 x 30 s to join, 5 s NTP, a 10 s reading, 10 s HTTPS, plus margin.
 WIFI_WITHIN_S = 60 + 5 + 10 + 10 + 15
 # The board's clock (NTP) and the PC's can differ a little.

@@ -65,6 +65,15 @@ static void printCommandResult(Command cmd, const CommandResult& r) {
     } else {
       Serial.println("no baseline stored");
     }
+    if (cmd == Command::Status) {
+      const AccelCalibration& c = r.accelCalibration;
+      if (r.hasAccelCalibration) {
+        Serial.printf("accel calibration offset %+.4f %+.4f %+.4f g, scale %.4f %.4f %.4f\n",
+                      c.offset[0], c.offset[1], c.offset[2], c.scale[0], c.scale[1], c.scale[2]);
+      } else {
+        Serial.println("no accel calibration stored (`cal`)");
+      }
+    }
     if (cmd != Command::Baseline) printReading(r.reading);
   }
 
@@ -80,11 +89,53 @@ static void printCommandResult(Command cmd, const CommandResult& r) {
   if (r.uploadTried) printUpload(r.reading, r.uploaded);
 }
 
+// `cal <face|save|clear>` (#22): what happened, then the tagged `@cal` reply.
+static void printCalResult(const CalResult& r) {
+  if (r.step == CalStep::Face && r.ok) {
+    Serial.printf("face %s captured (%u of 6)\n", calFaceName(r.face),
+                  static_cast<unsigned>(r.faceCount));
+  } else if (r.ok && r.step == CalStep::Save) {
+    Serial.println("calibration saved; baseline erased: mount the board, then run `baseline`");
+  } else if (r.ok) {
+    Serial.println("calibration erased; baseline erased: run `baseline`");
+  } else if (r.error == CalError::Moving) {
+    Serial.println("failed: the board moved (rest it still on a firm surface)");
+  } else if (r.error == CalError::WrongFace) {
+    Serial.printf("failed: the %s axis isn't the one pointing up (see ax/ay/az)\n",
+                  calFaceName(r.face));
+  } else if (r.error == CalError::MissingFaces) {
+    Serial.println("failed: capture all six faces first (see missing=)");
+  } else if (r.error == CalError::OutOfRange) {
+    Serial.println("failed: result out of range (a face captured wrongly? retake them)");
+  } else {
+    Serial.println("failed: flash write error");
+  }
+  char reply[200];
+  formatCalReply(r, reply, sizeof reply);
+  Serial.println(reply);
+}
+
 // Handles one typed line. `wifi` and `alert` only start here; loop() finishes them.
 static void handleCommand(const char* line) {
   // `ping <n>` echoes <n> as `@pong <n>`: board tests use it to prove a live reply.
   if (strncmp(line, "ping ", 5) == 0 && line[5] != '\0') {
     Serial.printf("@pong %s\n", line + 5);
+    window.commandHandled(millis());
+    return;
+  }
+
+  if (strncmp(line, "cal ", 4) == 0) {
+    CalStep step;
+    CalFace face = CalFace::PosX;
+    if (parseCalArg(line + 4, step, face)) {
+      if (step == CalStep::Face) {
+        Serial.printf("capturing face %s: keep the unit still with that axis up...\n",
+                      calFaceName(face));
+      }
+      printCalResult(runCalCommand(step, face, rtcState, CycleConfig{}, hw.ports));
+    } else {
+      Serial.println("cal: +x, -x, +y, -y, +z, -z (that axis pointing up), save or clear");
+    }
     window.commandHandled(millis());
     return;
   }
@@ -108,7 +159,8 @@ static void handleCommand(const char* line) {
   } else if (strcmp(line, "status") == 0) {
     cmd = Command::Status;
   } else {
-    Serial.println("commands: read, baseline, status, wifi [tag], alert [n], ping <n>");
+    Serial.println(
+        "commands: read, baseline, status, cal <face|save|clear>, wifi [tag], alert [n], ping <n>");
     window.commandHandled(millis());
     return;
   }
