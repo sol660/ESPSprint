@@ -133,6 +133,10 @@ void setup() {
 
   wake = runWakeCycle(boot.cause, rtcState, CycleConfig{}, hw.ports);
   printReading(wake.reading);
+  if (wake.alertsDropped > 0) {
+    log_w("alert queue full: %u oldest undelivered alert(s) dropped",
+          static_cast<unsigned>(wake.alertsDropped));
+  }
   if (wake.alertTried) printAlert(wake.alert, wake.alertSent);
   if (wake.uploadTried) printUpload(wake.reading, wake.uploaded);
 

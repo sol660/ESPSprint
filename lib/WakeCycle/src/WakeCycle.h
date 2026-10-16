@@ -23,6 +23,11 @@ struct RtcState {
   uint32_t bootCount = 0;  // this cold boot's number (kept in flash, cached here)
   Reading lastReading{};
   LevelState levels{};
+  // Alerts at the front of the flash queue that ntfy already took but whose
+  // clear from flash failed: cleared on a later wake, never sent again. Lost
+  // with RTC memory on a power loss, so those few are then sent once more
+  // (ntfy delivery is at-least-once in that rare case).
+  uint8_t alertsUncleared = 0;
 };
 
 // What the boot banner (`@boot fw= boot= cause= seq=`) reports.
@@ -63,6 +68,7 @@ struct CycleConfig {
   float alertDeg = config::ALERT_DEG;
   float alertStepDeg = config::ALERT_STEP_DEG;
   float levelDropMarginDeg = config::LEVEL_DROP_MARGIN_DEG;
+  size_t alertQueueLen = config::ALERT_QUEUE_LEN;
 };
 
 // When an awake board may go to sleep (spec #14 "Command window and sleep").
@@ -97,8 +103,10 @@ struct WakeResult {
   bool uploadTried = false;  // print `@upload ok=` when set
   bool uploaded = false;     // false: the reading was dropped (no buffer yet)
   bool alertTried = false;  // a notification was due (new or pending): print `@alert ok=`
-  bool alertSent = false;   // ntfy took it; false: kept in flash for the next wake
-  Alert alert{};            // the notification tried
+  bool alertSent = false;   // ntfy took every waiting one; false: the rest stay in flash for the next wake
+  size_t alertsSent = 0;    // how many ntfy took this wake, oldest first
+  size_t alertsDropped = 0;  // oldest alerts dropped because the queue was full (log them)
+  Alert alert{};            // the last notification tried
   bool camPulsed = false;
   uint32_t nextWakeS = 0;
   bool motionWake = false;

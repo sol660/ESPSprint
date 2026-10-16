@@ -54,6 +54,10 @@ constexpr uint32_t UPLOAD_INTERVAL_S = 60 * 60;        // normal batching
 constexpr uint32_t EVENT_UPLOAD_INTERVAL_S = 5 * 60;   // in event mode
 constexpr uint32_t MOTION_UPLOAD_MIN_GAP_S = 10 * 60;  // cap on motion-triggered uploads
 constexpr size_t BUFFER_CAPACITY = 3000;  // ~4 weeks of 15-min readings; oldest dropped
+// Alerts waiting for ntfy (WiFi down, ntfy refusing), kept in flash. Each
+// raised alert is delivered, oldest first; only when this many are waiting is
+// the oldest dropped (logged). Not set by spec.
+constexpr size_t ALERT_QUEUE_LEN = 8;
 
 // Levels (applied to the compensated tilt delta, degrees). WATCH is 1.0 deg
 // (spec #1: 0.5) until temperature calibration (ADR 0002).

@@ -168,6 +168,64 @@ Level classify(const Reading& r, const CycleConfig& cfg, LevelState& s) {
   return s.level;
 }
 
+// Clears alerts ntfy took on an earlier wake whose clear from flash failed.
+void clearDeliveredAlerts(RtcState& s, Store& store) {
+  if (s.alertsUncleared == 0) return;
+  const size_t count = store.alertCount();
+  if (count < s.alertsUncleared) s.alertsUncleared = static_cast<uint8_t>(count);
+  if (s.alertsUncleared > 0 && store.alertDrop(s.alertsUncleared)) s.alertsUncleared = 0;
+}
+
+// Adds a raised alert to the flash queue (oldest first), so every one is
+// delivered. Only an escalation still waiting (WATCH, then ALERT before the
+// WATCH went out) is folded into the higher level: the newest entry is
+// replaced. When the queue is full the oldest is dropped. Returns how many
+// undelivered alerts were dropped; queued says whether this one was saved.
+size_t queueAlert(const Alert& a, RtcState& s, const CycleConfig& cfg, Store& store,
+                  bool& queued) {
+  const size_t count = store.alertCount();
+  Alert newest{};
+  if (count > s.alertsUncleared && store.alertPeek(count - 1, newest) && a.level > newest.level) {
+    queued = store.alertReplaceNewest(a);
+    return 0;
+  }
+  const size_t capacity = std::max<size_t>(cfg.alertQueueLen, 1);
+  size_t lost = 0;
+  if (count >= capacity) {
+    const size_t drop = count - capacity + 1;
+    if (store.alertDrop(drop)) {
+      const size_t delivered = std::min<size_t>(drop, s.alertsUncleared);
+      s.alertsUncleared = static_cast<uint8_t>(s.alertsUncleared - delivered);
+      lost = drop - delivered;
+    }
+  }
+  queued = store.alertPush(a);
+  return lost;
+}
+
+// Sends the waiting alerts oldest first, stopping at the first failure so the
+// order holds. Each is cleared from flash only once ntfy has it. If that clear
+// fails they are remembered as delivered (RtcState::alertsUncleared) and
+// cleared on a later wake instead of being sent again.
+void sendQueuedAlerts(RtcState& s, Ports& ports, WakeResult& result) {
+  const size_t skip = s.alertsUncleared;
+  const size_t count = ports.store.alertCount();
+  size_t sent = 0;
+  Alert a{};
+  while (skip + sent < count && ports.store.alertPeek(skip + sent, a)) {
+    result.alert = a;
+    if (!ports.uplink.sendAlert(a)) break;
+    ++sent;
+  }
+  result.alertsSent = sent;
+  result.alertSent = skip + sent == count;
+  if (sent == 0) return;
+  const size_t delivered = skip + sent;
+  s.alertsUncleared = ports.store.alertDrop(delivered)
+                          ? 0
+                          : static_cast<uint8_t>(std::min<size_t>(delivered, UINT8_MAX));
+}
+
 }  // namespace
 
 bool isColdBoot(WakeCause cause) {
@@ -219,18 +277,19 @@ WakeResult runWakeCycle(WakeCause cause, RtcState& state, const CycleConfig& cfg
 
   const Level before = state.levels.level;
   reading.level = result.level = classify(reading, cfg, state.levels);
-  // A notification only when the level goes up (spec #1). It goes to flash
-  // first, so a WiFi failure (or a crash) can't swallow it, and is retried on
-  // every wake until ntfy takes it. A newer one replaces one still waiting.
+  // A notification only when the level goes up (spec #1). It goes to the flash
+  // queue first, so a WiFi failure (or a crash) can't swallow it.
   const bool raised = result.level > before;
-  Alert& alert = result.alert;
-  bool pending = ports.store.loadPendingAlert(alert);
-  if (raised) {
-    alert = Alert{result.level, reading.tiltDeg, reading.ts};
-    pending = true;
-    ports.store.savePendingAlert(alert);  // a failed save is logged by the Store
-  }
-  result.alertTried = pending;
+  clearDeliveredAlerts(state, ports.store);
+  Alert raisedAlert{result.level, reading.tiltDeg, reading.ts};
+  bool queued = false;
+  if (raised) result.alertsDropped = queueAlert(raisedAlert, state, cfg, ports.store, queued);
+  // One that couldn't be saved (a flash error, logged by the Store) is still
+  // tried in this wake, from memory.
+  const bool unsaved = raised && !queued;
+  const bool waiting = ports.store.alertPeek(state.alertsUncleared, result.alert);
+  if (unsaved && !waiting) result.alert = raisedAlert;
+  result.alertTried = waiting || unsaved;
 
   // Every reading is uploaded straight away (spec #14, first build). WiFi comes
   // after the reading, so the radio is off while measuring. On failure the
@@ -238,15 +297,16 @@ WakeResult runWakeCycle(WakeCause cause, RtcState& state, const CycleConfig& cfg
   result.uploadTried = true;
   if (connectAndSync(ports)) {
     dateBack(ports.clock, takenAtMs, reading);
-    if (raised && alert.ts != reading.ts) {
-      alert.ts = reading.ts;  // dated back with its reading
-      ports.store.savePendingAlert(alert);
+    if (raised && raisedAlert.ts != reading.ts) {
+      raisedAlert.ts = reading.ts;  // dated back with its reading
+      if (queued) ports.store.alertReplaceNewest(raisedAlert);
     }
-    // The alert first: it matters more than the reading. Cleared from flash
-    // only once ntfy has it, so it is delivered exactly once.
-    if (pending && ports.uplink.sendAlert(alert)) {
-      ports.store.clearPendingAlert();
-      result.alertSent = true;
+    // Alerts first: they matter more than the reading.
+    if (waiting) sendQueuedAlerts(state, ports, result);
+    if (unsaved && (!waiting || result.alertSent)) {
+      result.alert = raisedAlert;
+      result.alertSent = ports.uplink.sendAlert(raisedAlert);
+      if (result.alertSent) ++result.alertsSent;
     }
     result.uploaded = ports.uplink.sendReadings(&reading, 1);
   }

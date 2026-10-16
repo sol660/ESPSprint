@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "Ports.h"
+#include "config.h"
 
 class FakeImu : public Imu {
  public:
@@ -143,6 +144,53 @@ class FakeStore : public Store {
     return true;
   }
   void clearPendingAlert() override { hasPendingAlert = false; }
+
+  // The alert queue, oldest first. hasPendingAlert / pendingAlert above mirror
+  // its oldest entry, and a pending alert a test set there joins an empty queue.
+  std::deque<Alert> alertQueue;
+  size_t alertCapacity = config::ALERT_QUEUE_LEN;
+  bool alertDropFails = false;  // flash error on clearing delivered alerts
+
+  size_t alertCount() override {
+    adoptPendingAlert();
+    return alertQueue.size();
+  }
+  bool alertPeek(size_t index, Alert& out) override {
+    adoptPendingAlert();
+    if (index >= alertQueue.size()) return false;
+    out = alertQueue[index];
+    return true;
+  }
+  bool alertPush(const Alert& a) override {
+    adoptPendingAlert();
+    if (alertQueue.size() >= alertCapacity) return false;
+    alertQueue.push_back(a);
+    mirrorPendingAlert();
+    return true;
+  }
+  bool alertReplaceNewest(const Alert& a) override {
+    adoptPendingAlert();
+    if (alertQueue.empty()) return false;
+    alertQueue.back() = a;
+    mirrorPendingAlert();
+    return true;
+  }
+  bool alertDrop(size_t count) override {
+    adoptPendingAlert();
+    if (alertDropFails) return false;
+    while (count-- > 0 && !alertQueue.empty()) alertQueue.pop_front();
+    mirrorPendingAlert();
+    return true;
+  }
+
+ private:
+  void adoptPendingAlert() {
+    if (alertQueue.empty() && hasPendingAlert) alertQueue.push_back(pendingAlert);
+  }
+  void mirrorPendingAlert() {
+    hasPendingAlert = !alertQueue.empty();
+    if (hasPendingAlert) pendingAlert = alertQueue.front();
+  }
 };
 
 class FakeUplink : public Uplink {

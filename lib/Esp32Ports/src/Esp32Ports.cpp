@@ -327,71 +327,141 @@ bool Esp32Imu::resetBus() {  // full bus recovery: #7
 namespace {
 constexpr const char* KEY_BASELINE = "baseline";
 constexpr const char* KEY_BOOT_COUNT = "boots";
-constexpr const char* KEY_PENDING_ALERT = "alert";  // an Alert not yet delivered to ntfy
-}
+constexpr const char* KEY_ALERT_QUEUE = "alerts";  // Alerts not yet delivered to ntfy, oldest first
+constexpr const char* KEY_OLD_PENDING_ALERT = "alert";  // the first build's single pending Alert
 
-bool Esp32Store::loadPendingAlert(Alert& out) {
+// Opens the namespace, runs fn(prefs) and closes it again. False if the
+// namespace can't be opened (read-only opening fails if it was never written).
+template <typename Fn>
+bool withPrefs(const char* ns, bool readOnly, Fn fn) {
   Preferences prefs;
-  if (!prefs.begin(ns_, true)) return false;  // read-only; fails if never written
-  // isKey first: getBytesLength logs an error for a missing key, the usual case.
-  const bool ok = prefs.isKey(KEY_PENDING_ALERT) &&
-                  prefs.getBytesLength(KEY_PENDING_ALERT) == sizeof(Alert) &&
-                  prefs.getBytes(KEY_PENDING_ALERT, &out, sizeof(Alert)) == sizeof(Alert);
+  if (!prefs.begin(ns, readOnly)) return false;
+  const bool ok = fn(prefs);
   prefs.end();
   return ok;
 }
 
-bool Esp32Store::savePendingAlert(const Alert& a) {
-  Preferences prefs;
-  if (!prefs.begin(ns_, false)) return false;
-  const bool ok = prefs.putBytes(KEY_PENDING_ALERT, &a, sizeof a) == sizeof a;
-  prefs.end();
-  if (!ok) log_e("pending alert save to flash failed: it is lost if this wake can't send it");
-  return ok;
+// A fixed-size blob. isKey first: getBytesLength logs an error for a missing key.
+bool getBlob(Preferences& prefs, const char* key, void* out, size_t size) {
+  return prefs.isKey(key) && prefs.getBytesLength(key) == size &&
+         prefs.getBytes(key, out, size) == size;
 }
 
-void Esp32Store::clearPendingAlert() {
-  Preferences prefs;
-  if (!prefs.begin(ns_, false)) return;
-  if (prefs.isKey(KEY_PENDING_ALERT) && !prefs.remove(KEY_PENDING_ALERT)) {
-    log_e("pending alert clear failed: it may be sent again");
+bool putBlob(Preferences& prefs, const char* key, const void* data, size_t size) {
+  return prefs.putBytes(key, data, size) == size;
+}
+
+// The queue lives as one blob of up to ALERT_QUEUE_LEN Alerts.
+struct AlertQueue {
+  Alert items[config::ALERT_QUEUE_LEN];
+  size_t count = 0;
+};
+
+bool readAlertQueue(Preferences& prefs, AlertQueue& q) {
+  q.count = 0;
+  if (prefs.isKey(KEY_ALERT_QUEUE)) {
+    const size_t len = prefs.getBytesLength(KEY_ALERT_QUEUE);
+    if (len % sizeof(Alert) == 0 && len <= sizeof q.items &&
+        prefs.getBytes(KEY_ALERT_QUEUE, q.items, len) == len) {
+      q.count = len / sizeof(Alert);
+    } else {
+      log_w("alert queue in flash unreadable (%u bytes): starting it again", static_cast<unsigned>(len));
+    }
   }
-  prefs.end();
+  // One pending alert left by the first build joins the queue.
+  if (q.count == 0 && getBlob(prefs, KEY_OLD_PENDING_ALERT, &q.items[0], sizeof(Alert))) q.count = 1;
+  return true;
+}
+
+bool writeAlertQueue(Preferences& prefs, const AlertQueue& q) {
+  if (prefs.isKey(KEY_OLD_PENDING_ALERT)) prefs.remove(KEY_OLD_PENDING_ALERT);
+  if (q.count == 0) return !prefs.isKey(KEY_ALERT_QUEUE) || prefs.remove(KEY_ALERT_QUEUE);
+  return putBlob(prefs, KEY_ALERT_QUEUE, q.items, q.count * sizeof(Alert));
+}
+
+bool loadAlertQueue(const char* ns, AlertQueue& q) {
+  return withPrefs(ns, true, [&](Preferences& p) { return readAlertQueue(p, q); });
+}
+
+// Reads the queue, lets edit change it and writes it back.
+template <typename Edit>
+bool editAlertQueue(const char* ns, Edit edit) {
+  return withPrefs(ns, false, [&](Preferences& p) {
+    AlertQueue q;
+    return readAlertQueue(p, q) && edit(q) && writeAlertQueue(p, q);
+  });
+}
+
+}  // namespace
+
+size_t Esp32Store::alertCount() {
+  AlertQueue q;
+  return loadAlertQueue(ns_, q) ? q.count : 0;
+}
+
+bool Esp32Store::alertPeek(size_t index, Alert& out) {
+  AlertQueue q;
+  if (!loadAlertQueue(ns_, q)) return false;
+  if (index >= q.count) return false;
+  out = q.items[index];
+  return true;
+}
+
+bool Esp32Store::alertPush(const Alert& a) {
+  const bool ok = editAlertQueue(ns_, [&](AlertQueue& q) {
+    if (q.count >= config::ALERT_QUEUE_LEN) return false;
+    q.items[q.count++] = a;
+    return true;
+  });
+  if (!ok) log_e("alert save to flash failed: it is lost if this wake can't send it");
+  return ok;
+}
+
+bool Esp32Store::alertReplaceNewest(const Alert& a) {
+  const bool ok = editAlertQueue(ns_, [&](AlertQueue& q) {
+    if (q.count == 0) return false;
+    q.items[q.count - 1] = a;
+    return true;
+  });
+  if (!ok) log_e("alert update in flash failed");
+  return ok;
+}
+
+bool Esp32Store::alertDrop(size_t count) {
+  const bool ok = editAlertQueue(ns_, [&](AlertQueue& q) {
+    const size_t n = count < q.count ? count : q.count;
+    for (size_t i = n; i < q.count; ++i) q.items[i - n] = q.items[i];
+    q.count -= n;
+    return true;
+  });
+  if (!ok) log_e("alert clear in flash failed: cleared on a later wake instead");
+  return ok;
 }
 
 bool Esp32Store::loadBootCount(uint32_t& out) {
-  Preferences prefs;
-  if (!prefs.begin(ns_, true)) return false;  // read-only; fails if never written
-  const bool ok = prefs.isKey(KEY_BOOT_COUNT);
-  if (ok) out = prefs.getULong(KEY_BOOT_COUNT, 0);
-  prefs.end();
-  return ok;
+  return withPrefs(ns_, true, [&](Preferences& p) {
+    if (!p.isKey(KEY_BOOT_COUNT)) return false;
+    out = p.getULong(KEY_BOOT_COUNT, 0);
+    return true;
+  });
 }
 
 bool Esp32Store::saveBootCount(uint32_t count) {
-  Preferences prefs;
-  if (!prefs.begin(ns_, false)) return false;
-  const bool ok = prefs.putULong(KEY_BOOT_COUNT, count) == sizeof(uint32_t);
-  prefs.end();
+  const bool ok = withPrefs(ns_, false, [&](Preferences& p) {
+    return p.putULong(KEY_BOOT_COUNT, count) == sizeof(uint32_t);
+  });
   if (!ok) log_e("boot count save to flash failed: boot_count may repeat after a power loss");
   return ok;
 }
 
 bool Esp32Store::loadBaseline(Baseline& out) {
-  Preferences prefs;
-  if (!prefs.begin(ns_, true)) return false;  // read-only; fails if never written
-  const bool ok = prefs.getBytesLength(KEY_BASELINE) == sizeof(Baseline) &&
-                  prefs.getBytes(KEY_BASELINE, &out, sizeof(Baseline)) == sizeof(Baseline);
-  prefs.end();
-  return ok;
+  return withPrefs(ns_, true,
+                   [&](Preferences& p) { return getBlob(p, KEY_BASELINE, &out, sizeof out); });
 }
 
 bool Esp32Store::saveBaseline(const Baseline& b) {
-  Preferences prefs;
-  if (!prefs.begin(ns_, false)) return false;
-  const bool ok = prefs.putBytes(KEY_BASELINE, &b, sizeof b) == sizeof b;
-  prefs.end();
+  const bool ok =
+      withPrefs(ns_, false, [&](Preferences& p) { return putBlob(p, KEY_BASELINE, &b, sizeof b); });
   if (!ok) log_e("baseline save to flash failed");
   return ok;
 }
-

@@ -45,9 +45,12 @@ class Esp32Store : public Store {
   size_t bufferCount() override;
   bool bufferPeek(size_t index, Reading& out) override;
   void bufferDrop(size_t count) override;
-  bool loadPendingAlert(Alert& out) override;
-  bool savePendingAlert(const Alert& a) override;
-  void clearPendingAlert() override;
+  // The alert queue: one NVS blob of up to config::ALERT_QUEUE_LEN Alerts.
+  size_t alertCount() override;
+  bool alertPeek(size_t index, Alert& out) override;
+  bool alertPush(const Alert& a) override;
+  bool alertReplaceNewest(const Alert& a) override;
+  bool alertDrop(size_t count) override;
 
  private:
   const char* ns_;  // Preferences (NVS) namespace

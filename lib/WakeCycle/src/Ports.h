@@ -111,9 +111,19 @@ class Store {
   virtual size_t bufferCount() = 0;
   virtual bool bufferPeek(size_t index, Reading& out) = 0;  // 0 = oldest
   virtual void bufferDrop(size_t count) = 0;                // drops the oldest
-  virtual bool loadPendingAlert(Alert& out) = 0;
-  virtual bool savePendingAlert(const Alert& a) = 0;
-  virtual void clearPendingAlert() = 0;
+  // Alerts waiting for ntfy, oldest first, kept in flash so a WiFi failure or
+  // a crash can't swallow one. The wake cycle keeps it to
+  // CycleConfig::alertQueueLen (config::ALERT_QUEUE_LEN).
+  virtual size_t alertCount() = 0;
+  virtual bool alertPeek(size_t index, Alert& out) = 0;  // 0 = oldest
+  virtual bool alertPush(const Alert& a) = 0;            // appends after the newest
+  virtual bool alertReplaceNewest(const Alert& a) = 0;
+  virtual bool alertDrop(size_t count) = 0;              // drops the oldest; false on a flash error
+  // The single pending alert of the first build, now the oldest queued alert.
+  // The wake cycle no longer uses these.
+  virtual bool loadPendingAlert(Alert& out) { return alertPeek(0, out); }
+  virtual bool savePendingAlert(const Alert& a) { return alertPush(a); }
+  virtual void clearPendingAlert() { alertDrop(1); }
 };
 
 // WiFi + Supabase + ntfy in v1; replaceable (own WiFi code, ESP-NOW, cellular).
