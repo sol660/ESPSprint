@@ -160,6 +160,7 @@ class CamTrigger {
 class Sleeper {
  public:
   virtual ~Sleeper() = default;
+  // timerS is never 0: the wake cycle asks for at least 1 s.
   virtual void sleep(uint32_t timerS, bool motionWake) = 0;
 };
 

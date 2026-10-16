@@ -314,7 +314,8 @@ WakeResult runWakeCycle(WakeCause cause, RtcState& state, const CycleConfig& cfg
   result.readingsSent = result.uploaded ? 1 : 0;
 
   state.lastReading = reading;
-  result.nextWakeS = cfg.normalIntervalS;
+  // Never a 0 s timer: the board must always wake again.
+  result.nextWakeS = std::max<uint32_t>(cfg.normalIntervalS, 1);
   return result;
 }
 
@@ -345,6 +346,10 @@ CommandResult runCommand(Command cmd, RtcState& state, const CycleConfig& cfg, P
     case Command::Baseline:
       result.ok = captureBaseline(cfg, ports, result.baseline);
       result.hasBaseline = result.ok;
+      // The step rule compares against the previous delta, which was taken
+      // against the old baseline: start it again, or the change of baseline
+      // would look like a sudden movement on the next wake.
+      if (result.ok) state.levels.hasPrevious = false;
       break;
     case Command::Read:
       result.hasBaseline = ports.store.loadBaseline(result.baseline);
@@ -425,6 +430,7 @@ void WifiCommand::finish(bool connected, RtcState& state, const CycleConfig& cfg
   r.reading = readTiltDelta(cfg, ports, r.hasBaseline, r.baseline);
   stampReading(state, ports.clock, r.reading);
   r.reading.testTag = testTag_;
+  r.reading.level = state.levels.level;  // the device's level; a command reading doesn't change it
   r.ok = true;
   r.uploadTried = true;
   r.uploaded = connected && ports.uplink.sendReadings(&r.reading, 1);
