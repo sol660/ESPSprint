@@ -20,8 +20,10 @@ INTERVAL_S = 30    # NORMAL_INTERVAL_S
 BOOT_WITHIN_S = 5
 # The wake cycle runs before the window opens; with no stored baseline it can
 # take up to 35 s (25 s baseline + 10 s reading).
-FIRST_CYCLE_S = 35
-FIRST_REPLY_WITHIN_S = 45
+# Since #19 the power-on wake also uploads its reading before the window opens
+# (user approval on #14, 2026-10-16): add the worst-case upload from config.h.
+FIRST_CYCLE_S = 35 + harness.upload_worst_case_s()
+FIRST_REPLY_WITHIN_S = 45 + harness.upload_worst_case_s()
 # A timer wake takes one reading and uploads it, then sleeps. Worst case (user
 # approval on #14, 2026-10-16), from include/config.h: the reading, every WiFi
 # network timing out, the NTP limit, and the HTTPS connect/handshake plus the

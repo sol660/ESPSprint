@@ -11,7 +11,9 @@ import harness
 BOOT_WITHIN_S = 5
 # The first wake cycle runs before commands are read; with no stored baseline it
 # can take up to 35 s (25 s baseline + 10 s reading).
-FIRST_REPLY_WITHIN_S = 45
+# Since #19 the power-on wake also uploads its reading before the window opens
+# (user approval on #14, 2026-10-16): add the worst-case upload from config.h.
+FIRST_REPLY_WITHIN_S = 45 + harness.upload_worst_case_s()
 READ_WITHIN_S = 15      # config::READING_TIME_LIMIT_MS (10 s) plus margin
 BASELINE_WITHIN_S = 30  # config::BASELINE_TIME_LIMIT_MS (25 s) plus margin
 
