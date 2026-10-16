@@ -43,10 +43,12 @@ struct Reading {
   uint32_t testTag;  // 0 = a real reading; else the `wifi` command's tag (Supabase test_tag)
 };
 
+// A notification that the level went up (or a test message: testTag != 0).
 struct Alert {
-  Level level;
-  float tiltDeg;
-  uint32_t ts;
+  Level level;     // the new level (for a test: the level the device is at)
+  float tiltDeg;   // the tilt delta that raised it
+  uint32_t ts;     // UTC seconds of the reading; before the first time sync, time since power-on
+  uint32_t testTag = 0;  // 0 = a real alert; else the `alert` command's number
 };
 
 class Imu {

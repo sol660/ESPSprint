@@ -8,11 +8,21 @@
 
 enum class WakeCause : uint8_t { PowerOn, Timer, Motion, Serial };
 
+// The level rules' memory between wake-cycle readings (spec #1 "Levels").
+struct LevelState {
+  Level level = Level::Ok;
+  uint8_t watchStreak = 0;  // wake readings in a row at or over WATCH
+  bool hasPrevious = false;  // false until the first classified reading of this cold boot
+  float prevPitchDeg = 0;    // the previous classified reading's tilt delta, for the step rule
+  float prevRollDeg = 0;
+};
+
 // Kept across deep sleep in RTC memory.
 struct RtcState {
   uint32_t seq = 0;        // readings numbered since the last cold boot
   uint32_t bootCount = 0;  // this cold boot's number (kept in flash, cached here)
   Reading lastReading{};
+  LevelState levels{};
 };
 
 // What the boot banner (`@boot fw= boot= cause= seq=`) reports.
@@ -48,6 +58,11 @@ struct CycleConfig {
   uint32_t baselineTimeLimitMs = config::BASELINE_TIME_LIMIT_MS;
   uint32_t commandWindowMs = config::COMMAND_WINDOW_MS;
   uint32_t sessionIdleMs = config::SERIAL_SESSION_IDLE_MS;
+  float watchDeg = config::WATCH_DEG;
+  uint8_t watchConfirmReadings = config::WATCH_CONFIRM_READINGS;
+  float alertDeg = config::ALERT_DEG;
+  float alertStepDeg = config::ALERT_STEP_DEG;
+  float levelDropMarginDeg = config::LEVEL_DROP_MARGIN_DEG;
 };
 
 // When an awake board may go to sleep (spec #14 "Command window and sleep").
@@ -81,7 +96,9 @@ struct WakeResult {
   size_t readingsSent = 0;
   bool uploadTried = false;  // print `@upload ok=` when set
   bool uploaded = false;     // false: the reading was dropped (no buffer yet)
-  bool alertSent = false;
+  bool alertTried = false;  // a notification was due (new or pending): print `@alert ok=`
+  bool alertSent = false;   // ntfy took it; false: kept in flash for the next wake
+  Alert alert{};            // the notification tried
   bool camPulsed = false;
   uint32_t nextWakeS = 0;
   bool motionWake = false;

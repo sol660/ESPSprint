@@ -186,8 +186,11 @@ class FakeUplink : public Uplink {
     batchesSent.emplace_back(readings, readings + count);
     return true;
   }
+  bool acceptsAlerts = true;  // ntfy takes what is posted
+  int alertAttempts = 0;
   bool sendAlert(const Alert& alert) override {
-    if (!up) return false;
+    ++alertAttempts;
+    if (!up || !acceptsAlerts) return false;
     alertsSent.push_back(alert);
     return true;
   }

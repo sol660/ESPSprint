@@ -121,6 +121,53 @@ void dateBack(Clock& clock, uint32_t takenAtMs, Reading& r) {
   r.timeSynced = true;
 }
 
+// The level rules (spec #1 "Levels", #14, ADR 0002), applied to each wake
+// reading in turn. Returns the new level and updates the rules' memory.
+//  - WATCH: tilt delta >= watchDeg on watchConfirmReadings readings in a row.
+//  - ALERT: tilt delta >= alertDeg, or a step >= alertStepDeg since the previous
+//    reading (the distance between the two (pitch, roll) deltas). Immediate.
+//  - Dropping: a level is held until the tilt is levelDropMarginDeg below its
+//    threshold (and nothing else raises it), then falls to whatever the
+//    readings support; a step ALERT drops on the next reading without a step.
+// A reading with no still window has no angle: it changes nothing.
+Level classify(const Reading& r, const CycleConfig& cfg, LevelState& s) {
+  if (r.accelG <= 0) return s.level;  // no accepted window: pitch/roll are not measured
+
+  const float tilt = r.tiltDeg;
+  bool step = false;
+  if (s.hasPrevious) {
+    const float dp = r.pitchDeg - s.prevPitchDeg;
+    const float dr = r.rollDeg - s.prevRollDeg;
+    step = std::sqrt(dp * dp + dr * dr) >= cfg.alertStepDeg;
+  }
+  s.hasPrevious = true;
+  s.prevPitchDeg = r.pitchDeg;
+  s.prevRollDeg = r.rollDeg;
+
+  if (tilt >= cfg.watchDeg) {
+    if (s.watchStreak < 255) ++s.watchStreak;
+  } else {
+    s.watchStreak = 0;
+  }
+
+  Level raised = Level::Ok;
+  if (tilt >= cfg.alertDeg || step) {
+    raised = Level::Alert;
+  } else if (s.watchStreak >= cfg.watchConfirmReadings) {
+    raised = Level::Watch;
+  }
+
+  Level held = Level::Ok;
+  if (s.level == Level::Alert && tilt >= cfg.alertDeg - cfg.levelDropMarginDeg) {
+    held = Level::Alert;
+  } else if (s.level != Level::Ok && tilt >= cfg.watchDeg - cfg.levelDropMarginDeg) {
+    held = Level::Watch;
+  }
+
+  s.level = std::max(raised, held);
+  return s.level;
+}
+
 }  // namespace
 
 bool isColdBoot(WakeCause cause) {
@@ -170,12 +217,37 @@ WakeResult runWakeCycle(WakeCause cause, RtcState& state, const CycleConfig& cfg
   const uint32_t takenAtMs = stampReading(state, ports.clock, reading);
   result.tookReading = true;
 
+  const Level before = state.levels.level;
+  reading.level = result.level = classify(reading, cfg, state.levels);
+  // A notification only when the level goes up (spec #1). It goes to flash
+  // first, so a WiFi failure (or a crash) can't swallow it, and is retried on
+  // every wake until ntfy takes it. A newer one replaces one still waiting.
+  const bool raised = result.level > before;
+  Alert& alert = result.alert;
+  bool pending = ports.store.loadPendingAlert(alert);
+  if (raised) {
+    alert = Alert{result.level, reading.tiltDeg, reading.ts};
+    pending = true;
+    ports.store.savePendingAlert(alert);  // a failed save is logged by the Store
+  }
+  result.alertTried = pending;
+
   // Every reading is uploaded straight away (spec #14, first build). WiFi comes
   // after the reading, so the radio is off while measuring. On failure the
   // reading is dropped: there is no buffer yet.
   result.uploadTried = true;
   if (connectAndSync(ports)) {
     dateBack(ports.clock, takenAtMs, reading);
+    if (raised && alert.ts != reading.ts) {
+      alert.ts = reading.ts;  // dated back with its reading
+      ports.store.savePendingAlert(alert);
+    }
+    // The alert first: it matters more than the reading. Cleared from flash
+    // only once ntfy has it, so it is delivered exactly once.
+    if (pending && ports.uplink.sendAlert(alert)) {
+      ports.store.clearPendingAlert();
+      result.alertSent = true;
+    }
     result.uploaded = ports.uplink.sendReadings(&reading, 1);
   }
   ports.uplink.disconnect();

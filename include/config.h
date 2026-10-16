@@ -55,12 +55,18 @@ constexpr uint32_t EVENT_UPLOAD_INTERVAL_S = 5 * 60;   // in event mode
 constexpr uint32_t MOTION_UPLOAD_MIN_GAP_S = 10 * 60;  // cap on motion-triggered uploads
 constexpr size_t BUFFER_CAPACITY = 3000;  // ~4 weeks of 15-min readings; oldest dropped
 
-// Levels (applied to the compensated tilt delta, degrees)
-constexpr float WATCH_DEG = 0.5f;
-constexpr uint8_t WATCH_CONFIRM_READINGS = 2;
+// Levels (applied to the compensated tilt delta, degrees). WATCH is 1.0 deg
+// (spec #1: 0.5) until temperature calibration (ADR 0002).
+constexpr float WATCH_DEG = 1.0f;
+constexpr uint8_t WATCH_CONFIRM_READINGS = 2;  // readings in a row at or over WATCH_DEG
 constexpr float ALERT_DEG = 2.0f;
 constexpr float ALERT_STEP_DEG = 0.5f;     // change since previous reading
+// A level drops only once the tilt is this far below its threshold, so a
+// reading sitting at a threshold doesn't flap: WATCH holds down to 0.9 deg,
+// ALERT down to 1.9 deg.
 constexpr float LEVEL_DROP_MARGIN_DEG = 0.1f;
+// ntfy server for alerts; the topic is secrets::NTFY_TOPIC.
+constexpr const char* NTFY_SERVER = "https://ntfy.sh";
 
 // Measurement
 constexpr float STILL_ACCEL_STD_G = 0.003f;  // motion gate, tune on the bench
