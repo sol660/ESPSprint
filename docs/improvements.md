@@ -12,7 +12,8 @@ From the spec #14 code review (left as they are, for a decision):
 - **The HTTPS post still blocks `loop()`** inside the `wifi` and `alert` commands, for up to 2 × `HTTP_TIMEOUT_MS` (TLS handshake, then the response). Only the WiFi join and NTP waits are polled.
 - **`setup()`'s power-on wake waits on WiFi** (up to 2 × `WIFI_CONNECT_TIMEOUT_S` + NTP + HTTPS) before the command window opens.
 - **HIL `SERIAL_SESSION_IDLE_MS` is 20 s** in `esp32dev_hil`, short for typing by hand on that build.
-- **`CORE_DEBUG_LEVEL=2`** (warnings and errors) is set in the shipped `esp32dev` build.
+- ~~**`CORE_DEBUG_LEVEL=2`**~~ **Resolved 2026-10-16: kept** (user). Warnings and errors stay on in the shipped build for field debugging.
+- **Alert merge: accepted 2026-10-16** (user). A WATCH still waiting is folded into a later ALERT, so only the ALERT is sent; same or lower levels are never folded.
 - **PEAP without a RADIUS server CA**: the eduroam join doesn't check the RADIUS server's certificate.
 - **`test_upload.py`'s `FIRST_REPLY_WITHIN_S` is hard-coded**, not derived from `config.h` like the other board-test limits.
 
