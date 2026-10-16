@@ -53,9 +53,13 @@ class FakeClock : public Clock {
     uptime += msPerUptimeRead;
     return now;
   }
+  uint32_t utcAfterSync = 0;  // if set, a successful sync sets the clock to this
   bool sync() override {
     ++syncCalls;
-    if (syncSucceeds) synced = true;
+    if (syncSucceeds) {
+      synced = true;
+      if (utcAfterSync != 0) utc = utcAfterSync;
+    }
     return syncSucceeds;
   }
 };
@@ -126,12 +130,25 @@ class FakeStore : public Store {
 
 class FakeUplink : public Uplink {
  public:
-  bool up = true;
+  bool up = true;                // the network can be joined
+  bool acceptsReadings = true;   // the server stores what is posted
+  bool connected = false;
+  int connects = 0;
+  int disconnects = 0;
   std::vector<std::vector<Reading>> batchesSent;
   std::vector<Alert> alertsSent;
 
+  bool connect() override {
+    ++connects;
+    connected = up;
+    return connected;
+  }
+  void disconnect() override {
+    ++disconnects;
+    connected = false;
+  }
   bool sendReadings(const Reading* readings, size_t count) override {
-    if (!up) return false;
+    if (!connected || !acceptsReadings) return false;
     batchesSent.emplace_back(readings, readings + count);
     return true;
   }

@@ -43,6 +43,19 @@ def installer(request, pytestconfig):
 
 
 @pytest.fixture
+def supabase():
+    """The readings table with the device's key, from include/secrets.h.
+
+    Secrets not filled in is a FAIL, never a skip.
+    """
+    import supabase_rest
+    try:
+        return supabase_rest.from_secrets()
+    except ValueError as e:
+        pytest.fail(str(e))
+
+
+@pytest.fixture
 def board():
     """The plugged-in board. No board found is a FAIL, never a skip."""
     port = harness.open_port(harness.find_port())

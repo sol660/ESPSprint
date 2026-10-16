@@ -43,6 +43,14 @@ void formatBootLine(const BootInfo& b, char* out, size_t size) {
                 static_cast<unsigned long>(b.seq));
 }
 
+void formatUploadLine(const Reading& r, bool ok, char* out, size_t size) {
+  if (size == 0) return;
+  char tag[12] = "none";
+  if (r.testTag != 0) std::snprintf(tag, sizeof tag, "%lu", static_cast<unsigned long>(r.testTag));
+  std::snprintf(out, size, "@upload ok=%d tag=%s seq=%lu boot=%lu", ok ? 1 : 0, tag,
+                static_cast<unsigned long>(r.seq), static_cast<unsigned long>(r.bootCount));
+}
+
 void formatSleepLine(uint32_t timerS, char* out, size_t size) {
   if (size == 0) return;
   std::snprintf(out, size, "@sleep s=%lu", static_cast<unsigned long>(timerS));

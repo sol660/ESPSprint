@@ -49,8 +49,13 @@ class Esp32Store : public Store {
   const char* ns_;  // Preferences (NVS) namespace
 };
 
+// WiFi (secrets::WIFI_NETWORKS in order) + HTTPS POST to Supabase's REST API.
+// Self-contained so it can be swapped for other WiFi code: the core only sees
+// connect / disconnect / sendReadings.
 class Esp32Uplink : public Uplink {
  public:
+  bool connect() override;
+  void disconnect() override;
   bool sendReadings(const Reading* readings, size_t count) override;
   bool sendAlert(const Alert& alert) override;
 };

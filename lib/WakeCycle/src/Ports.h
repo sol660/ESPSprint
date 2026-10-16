@@ -40,6 +40,7 @@ struct Reading {
   bool stable;
   Level level;
   ReadingEvent event;
+  uint32_t testTag;  // 0 = a real reading; else the `wifi` command's tag (Supabase test_tag)
 };
 
 struct Alert {
@@ -84,9 +85,15 @@ class Store {
   virtual void clearPendingAlert() = 0;
 };
 
+// WiFi + Supabase + ntfy in v1; replaceable (own WiFi code, ESP-NOW, cellular).
 class Uplink {
  public:
   virtual ~Uplink() = default;
+  // Joins a network; false = offline for this wake (a normal result, not an error).
+  virtual bool connect() = 0;
+  // Radio off. Called after every upload attempt, connected or not.
+  virtual void disconnect() = 0;
+  // Needs connect() first. True only if the server stored every reading.
   virtual bool sendReadings(const Reading* readings, size_t count) = 0;
   virtual bool sendAlert(const Alert& alert) = 0;
 };

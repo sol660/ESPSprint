@@ -95,10 +95,30 @@ Reading readTiltDelta(const CycleConfig& cfg, Ports& ports, bool haveBaseline,
   return r;
 }
 
-// The reading's identity: (device_id, seq, boot_count) is unique.
-void numberReading(RtcState& state, Reading& r) {
+// Numbers and dates a reading. (device_id, seq, boot_count) is its unique
+// identity. Returns the uptime it was taken at, for dating it back later.
+uint32_t stampReading(RtcState& state, Clock& clock, Reading& r) {
   r.seq = ++state.seq;
   r.bootCount = state.bootCount;
+  r.ts = clock.nowUtc();
+  r.timeSynced = clock.isSynced();
+  return clock.uptimeMs();
+}
+
+// Joins a network and syncs the time (spec #14: NTP after connecting).
+// A failed sync still uploads, with time_synced=false.
+bool connectAndSync(Ports& ports) {
+  if (!ports.uplink.connect()) return false;
+  ports.clock.sync();
+  return true;
+}
+
+// A reading taken before the clock was set gets real time once it is: now,
+// less the time since it was taken.
+void dateBack(Clock& clock, uint32_t takenAtMs, Reading& r) {
+  if (r.timeSynced || !clock.isSynced()) return;
+  r.ts = clock.nowUtc() - (clock.uptimeMs() - takenAtMs) / 1000;
+  r.timeSynced = true;
 }
 
 }  // namespace
@@ -145,10 +165,23 @@ WakeResult runWakeCycle(WakeCause cause, RtcState& state, const CycleConfig& cfg
   bool haveBaseline = ports.store.loadBaseline(baseline);
   if (!haveBaseline) haveBaseline = captureBaseline(cfg, ports, baseline);
 
-  result.reading = readTiltDelta(cfg, ports, haveBaseline, baseline);
-  numberReading(state, result.reading);
-  state.lastReading = result.reading;
+  Reading& reading = result.reading;
+  reading = readTiltDelta(cfg, ports, haveBaseline, baseline);
+  const uint32_t takenAtMs = stampReading(state, ports.clock, reading);
   result.tookReading = true;
+
+  // Every reading is uploaded straight away (spec #14, first build). WiFi comes
+  // after the reading, so the radio is off while measuring. On failure the
+  // reading is dropped: there is no buffer yet.
+  result.uploadTried = true;
+  if (connectAndSync(ports)) {
+    dateBack(ports.clock, takenAtMs, reading);
+    result.uploaded = ports.uplink.sendReadings(&reading, 1);
+  }
+  ports.uplink.disconnect();
+  result.readingsSent = result.uploaded ? 1 : 0;
+
+  state.lastReading = reading;
   result.nextWakeS = cfg.normalIntervalS;
   return result;
 }
@@ -170,7 +203,8 @@ void CommandWindow::commandHandled(uint32_t nowMs) {
 
 bool CommandWindow::sleepDue(uint32_t nowMs) const { return nowMs - fromMs_ >= forMs_; }
 
-CommandResult runCommand(Command cmd, RtcState& state, const CycleConfig& cfg, Ports& ports) {
+CommandResult runCommand(Command cmd, RtcState& state, const CycleConfig& cfg, Ports& ports,
+                         uint32_t testTag) {
   CommandResult result;
   switch (cmd) {
     case Command::Baseline:
@@ -188,6 +222,20 @@ CommandResult runCommand(Command cmd, RtcState& state, const CycleConfig& cfg, P
       result.reading = state.lastReading;
       result.ok = true;
       break;
+    case Command::Wifi: {
+      // Connect first, so the reading has real time, then read and upload.
+      const bool connected = connectAndSync(ports);
+      result.hasBaseline = ports.store.loadBaseline(result.baseline);
+      result.reading = readTiltDelta(cfg, ports, result.hasBaseline, result.baseline);
+      stampReading(state, ports.clock, result.reading);
+      result.reading.testTag = testTag;
+      result.ok = true;
+      result.uploadTried = true;
+      result.uploaded = connected && ports.uplink.sendReadings(&result.reading, 1);
+      ports.uplink.disconnect();
+      state.lastReading = result.reading;
+      break;
+    }
   }
   return result;
 }

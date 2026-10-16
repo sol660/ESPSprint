@@ -20,6 +20,13 @@ static void printReading(const Reading& r) {
                 r.stable ? "stable" : "UNSTABLE");
 }
 
+// `@upload ok= tag= seq= boot=`. ok=0: the reading was dropped (no buffer yet).
+static void printUpload(const Reading& r, bool ok) {
+  char line[80];
+  formatUploadLine(r, ok, line, sizeof line);
+  Serial.println(line);
+}
+
 static void handleCommand(const char* line) {
   // `ping <n>` echoes <n> as `@pong <n>`: board tests use it to prove a live reply.
   if (strncmp(line, "ping ", 5) == 0 && line[5] != '\0') {
@@ -28,7 +35,15 @@ static void handleCommand(const char* line) {
   }
 
   Command cmd;
-  if (strcmp(line, "read") == 0) {
+  uint32_t testTag = 0;
+  if (strcmp(line, "wifi") == 0 || strncmp(line, "wifi ", 5) == 0) {
+    // `wifi <n>` tags the test row with <n> (board tests pass their own random
+    // number); plain `wifi` picks a random 9-digit tag.
+    cmd = Command::Wifi;
+    testTag = line[4] == ' ' ? strtoul(line + 5, nullptr, 10) : 0;
+    if (testTag == 0) testTag = 100000000UL + esp_random() % 900000000UL;
+    Serial.println("wifi: connecting, then reading and uploading (up to ~90 s)...");
+  } else if (strcmp(line, "read") == 0) {
     cmd = Command::Read;
   } else if (strcmp(line, "baseline") == 0) {
     cmd = Command::Baseline;
@@ -36,11 +51,11 @@ static void handleCommand(const char* line) {
   } else if (strcmp(line, "status") == 0) {
     cmd = Command::Status;
   } else {
-    Serial.println("commands: read, baseline, status, ping <n>");
+    Serial.println("commands: read, baseline, status, wifi [tag], ping <n>");
     return;
   }
 
-  const CommandResult r = runCommand(cmd, rtcState, CycleConfig{}, hw.ports);
+  const CommandResult r = runCommand(cmd, rtcState, CycleConfig{}, hw.ports, testTag);
   if (!r.ok) {
     Serial.println("failed (unit moving, or flash write error)");
   } else {
@@ -53,13 +68,15 @@ static void handleCommand(const char* line) {
   }
 
   // Tagged reply for board tests (ADR 0001): `read` -> @read, `baseline`/`status` -> @status.
+  // `wifi` -> @read then @upload.
   char reply[200];
-  if (cmd == Command::Read) {
+  if (cmd == Command::Read || cmd == Command::Wifi) {
     formatReadReply(r, reply, sizeof reply);
   } else {
     formatStatusReply(r, reply, sizeof reply);
   }
   Serial.println(reply);
+  if (r.uploadTried) printUpload(r.reading, r.uploaded);
 }
 
 void setup() {
@@ -75,6 +92,7 @@ void setup() {
 
   wake = runWakeCycle(boot.cause, rtcState, CycleConfig{}, hw.ports);
   printReading(wake.reading);
+  if (wake.uploadTried) printUpload(wake.reading, wake.uploaded);
 
   // Listening starts now, after the wake cycle, so the installer gets the whole
   // window. Commands typed during the cycle wait in the UART buffer.

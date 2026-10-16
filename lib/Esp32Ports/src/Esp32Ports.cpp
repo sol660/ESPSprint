@@ -1,18 +1,47 @@
 #include "Esp32Ports.h"
 
+#include <HTTPClient.h>
 #include <Preferences.h>
+#include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <Wire.h>
 #include <esp_sleep.h>
+#include <esp_sntp.h>
 #include <time.h>
 
+#include "ReadingJson.h"
 #include "config.h"
+
+#if __has_include("secrets.h")
+#include "secrets.h"
+#else
+#error "include/secrets.h is missing: copy include/secrets.example.h to include/secrets.h and fill it in"
+#endif
 
 // Placeholders report failure until their ticket implements them.
 
+// ---- Esp32Clock: the chip's clock, kept through deep sleep, set over NTP ----
+
 uint32_t Esp32Clock::nowUtc() { return static_cast<uint32_t>(time(nullptr)); }
-bool Esp32Clock::isSynced() { return false; }
+// After a power loss the clock restarts at 1970 until the first NTP sync.
+bool Esp32Clock::isSynced() { return nowUtc() > config::CLOCK_VALID_AFTER_UTC; }
 uint32_t Esp32Clock::uptimeMs() { return millis(); }
-bool Esp32Clock::sync() { return false; }
+
+bool Esp32Clock::sync() {  // needs WiFi up
+  sntp_set_sync_status(SNTP_SYNC_STATUS_RESET);
+  configTime(0, 0, config::NTP_SERVER_1, config::NTP_SERVER_2);  // UTC
+  const uint32_t start = millis();
+  // Bounded wait inside a wake or the `wifi` command, not in loop() polling.
+  while (millis() - start < config::NTP_SYNC_TIMEOUT_MS) {
+    if (sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED) {
+      log_i("time synced: %lu", static_cast<unsigned long>(nowUtc()));
+      return true;
+    }
+    delay(50);  // lets the WiFi/lwIP tasks run
+  }
+  log_w("NTP sync timed out after %lu ms", static_cast<unsigned long>(config::NTP_SYNC_TIMEOUT_MS));
+  return false;
+}
 
 bool Esp32Store::loadCalibration(TempCalibration&) { return false; }
 bool Esp32Store::bufferPush(const Reading&) { return false; }
@@ -23,8 +52,118 @@ bool Esp32Store::loadPendingAlert(Alert&) { return false; }
 bool Esp32Store::savePendingAlert(const Alert&) { return false; }
 void Esp32Store::clearPendingAlert() {}
 
-bool Esp32Uplink::sendReadings(const Reading*, size_t) { return false; }
-bool Esp32Uplink::sendAlert(const Alert&) { return false; }
+bool Esp32Uplink::sendAlert(const Alert&) { return false; }  // ntfy: #20
+
+// ---- Esp32Uplink: WiFi + Supabase REST ----
+
+namespace {
+
+const char* resetReasonName() {
+  switch (esp_reset_reason()) {
+    case ESP_RST_POWERON:
+      return "POWERON";
+    case ESP_RST_EXT:
+      return "EXT";
+    case ESP_RST_SW:
+      return "SW";
+    case ESP_RST_PANIC:
+      return "PANIC";
+    case ESP_RST_INT_WDT:
+      return "INT_WDT";
+    case ESP_RST_TASK_WDT:
+      return "TASK_WDT";
+    case ESP_RST_WDT:
+      return "WDT";
+    case ESP_RST_DEEPSLEEP:
+      return "DEEPSLEEP";
+    case ESP_RST_BROWNOUT:
+      return "BROWNOUT";
+    case ESP_RST_SDIO:
+      return "SDIO";
+    default:
+      return "UNKNOWN";
+  }
+}
+
+}  // namespace
+
+bool Esp32Uplink::connect() {
+  WiFi.persistent(false);  // don't write the credentials to flash on every wake
+  WiFi.mode(WIFI_STA);
+  const size_t tries = min(secrets::WIFI_NETWORK_COUNT, static_cast<size_t>(config::WIFI_MAX_NETWORKS));
+  for (size_t i = 0; i < tries; ++i) {
+    const secrets::WifiNetwork& net = secrets::WIFI_NETWORKS[i];
+    log_i("WiFi: trying %s", net.ssid);
+    WiFi.begin(net.ssid, net.password);
+    const uint32_t start = millis();
+    // Bounded wait inside a wake or the `wifi` command, not in loop() polling.
+    while (millis() - start < config::WIFI_CONNECT_TIMEOUT_S * 1000UL) {
+      if (WiFi.status() == WL_CONNECTED) {
+        log_i("WiFi: joined %s, RSSI %d dBm", net.ssid, WiFi.RSSI());
+        return true;
+      }
+      delay(100);
+    }
+    log_w("WiFi: %s not joined within %lu s", net.ssid,
+          static_cast<unsigned long>(config::WIFI_CONNECT_TIMEOUT_S));
+    WiFi.disconnect();
+  }
+  return false;
+}
+
+void Esp32Uplink::disconnect() {
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+}
+
+bool Esp32Uplink::sendReadings(const Reading* readings, size_t count) {
+  if (WiFi.status() != WL_CONNECTED || count == 0) return false;
+
+  const UploadHealth health{secrets::DEVICE_ID, config::FW_VERSION, resetReasonName(), true,
+                            static_cast<int>(WiFi.RSSI())};
+  String body;
+  body.reserve(count * 520 + 2);
+  body += '[';
+  char row[640];
+  for (size_t i = 0; i < count; ++i) {
+    if (encodeReadingJson(readings[i], health, row, sizeof row) == 0) {
+      log_e("reading %lu too long to encode", static_cast<unsigned long>(readings[i].seq));
+      return false;
+    }
+    if (i > 0) body += ',';
+    body += row;
+  }
+  body += ']';
+
+  // TLS without checking the server certificate: the link is still encrypted,
+  // and the key only allows inserts (supabase/schema.sql). See docs/improvements.md #19.
+  WiFiClientSecure tls;
+  tls.setInsecure();
+  HTTPClient http;
+  http.setTimeout(config::HTTP_TIMEOUT_MS);
+  http.setConnectTimeout(config::HTTP_TIMEOUT_MS);
+  String url = String(secrets::SUPABASE_URL) + config::SUPABASE_READINGS_PATH;
+  if (!http.begin(tls, url)) {
+    log_e("bad Supabase URL: %s", url.c_str());
+    return false;
+  }
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("Prefer", "return=minimal");
+  http.addHeader("apikey", secrets::SUPABASE_KEY);
+  // Legacy anon keys are JWTs and also go in Authorization; new publishable
+  // keys (sb_publishable_...) go in apikey only.
+  if (strncmp(secrets::SUPABASE_KEY, "eyJ", 3) == 0) {
+    http.addHeader("Authorization", String("Bearer ") + secrets::SUPABASE_KEY);
+  }
+  const int code = http.POST(body);
+  const bool ok = code == 201 || code == 200 || code == 204;
+  if (!ok) {
+    log_e("Supabase insert failed: HTTP %d %s", code,
+          code > 0 ? http.getString().c_str() : http.errorToString(code).c_str());
+  }
+  http.end();
+  return ok;
+}
 
 void Esp32CamTrigger::pulse() { log_w("CAM pulse requested (not wired yet)"); }
 

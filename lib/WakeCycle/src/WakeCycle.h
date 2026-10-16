@@ -75,6 +75,8 @@ struct WakeResult {
   Reading reading{};
   Level level = Level::Ok;
   size_t readingsSent = 0;
+  bool uploadTried = false;  // print `@upload ok=` when set
+  bool uploaded = false;     // false: the reading was dropped (no buffer yet)
   bool alertSent = false;
   bool camPulsed = false;
   uint32_t nextWakeS = 0;
@@ -85,13 +87,20 @@ WakeResult runWakeCycle(WakeCause cause, RtcState& state, const CycleConfig& cfg
 
 // Installer commands typed over USB serial. The serial adapter parses and prints;
 // this does the work.
-enum class Command : uint8_t { Read, Baseline, Status };
+// Wifi: connect, sync the time, take a reading and upload it tagged with testTag
+// (Supabase test_tag), so the installer and the board test can find that row.
+// No other command uses WiFi.
+enum class Command : uint8_t { Read, Baseline, Status, Wifi };
 
 struct CommandResult {
   bool ok = false;
   Reading reading{};
   bool hasBaseline = false;
   Baseline baseline{};
+  bool uploadTried = false;
+  bool uploaded = false;
 };
 
-CommandResult runCommand(Command cmd, RtcState& state, const CycleConfig& cfg, Ports& ports);
+// testTag is used by Command::Wifi only (non-zero).
+CommandResult runCommand(Command cmd, RtcState& state, const CycleConfig& cfg, Ports& ports,
+                         uint32_t testTag = 0);

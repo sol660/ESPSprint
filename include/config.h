@@ -95,7 +95,18 @@ constexpr const char* TIMEZONE = "UTC0";
 // Time limits
 constexpr uint32_t WATCHDOG_READING_S = 45;   // reading-only wakes
 constexpr uint32_t WATCHDOG_UPLOAD_S = 105;   // wakes that use WiFi
-constexpr uint32_t WIFI_CONNECT_TIMEOUT_S = 20;  // per network
-constexpr uint8_t WIFI_MAX_NETWORKS = 2;  // spec: "up to 2 networks tried" per wake
+// WiFi (spec #14): home, then school, 30 s each. 2 x 30 s + NTP + HTTPS fits
+// inside the 105 s upload watchdog.
+constexpr uint32_t WIFI_CONNECT_TIMEOUT_S = 30;  // per network
+constexpr uint8_t WIFI_MAX_NETWORKS = 2;  // the first 2 of secrets::WIFI_NETWORKS
+constexpr const char* NTP_SERVER_1 = "pool.ntp.org";
+constexpr const char* NTP_SERVER_2 = "time.google.com";
+constexpr uint32_t NTP_SYNC_TIMEOUT_MS = 5 * 1000;
+// The clock counts as set once it is past this (2023-11-14): before the first
+// sync after a power loss it counts from 1970.
+constexpr uint32_t CLOCK_VALID_AFTER_UTC = 1700000000;
+constexpr uint32_t HTTP_TIMEOUT_MS = 10 * 1000;
+// Supabase REST endpoint for the readings table (supabase/schema.sql).
+constexpr const char* SUPABASE_READINGS_PATH = "/rest/v1/readings";
 
 }  // namespace config

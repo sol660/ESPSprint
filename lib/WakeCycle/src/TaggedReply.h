@@ -17,5 +17,9 @@ void formatStatusReply(const CommandResult& r, char* out, size_t size);
 // `@boot fw=<ver> boot=<n> cause=<PowerOn|Timer|...> seq=<n>`, the first line of every boot.
 void formatBootLine(const BootInfo& b, char* out, size_t size);
 
+// `@upload ok=<0|1> tag=<n|none> seq=<n> boot=<n>` after each upload attempt.
+// ok=0 means the reading was dropped (no buffer in the first build).
+void formatUploadLine(const Reading& r, bool ok, char* out, size_t size);
+
 // `@sleep s=<seconds>`, printed just before deep sleep with the timer wake set.
 void formatSleepLine(uint32_t timerS, char* out, size_t size);
