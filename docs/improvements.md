@@ -6,6 +6,16 @@ A running log of what changed, the decisions made along the way, and what's stil
 
 - **Accelerometer reads 0.876 g at rest** (board run 2026-10-16, both the PC reading test and `embedded/test_imu`). A 12 % low Z reading also makes angles read about 14 % large near level (pitch = atan(x/z)). Options: a six-position offset/gain calibration stored in flash (fits the later calibration work), or checking whether the module is a clone (WHO_AM_I). The 1 g tests were not changed.
 
+From the spec #14 code review (left as they are, for a decision):
+
+- **`time_synced` on a back-dated reading.** #19's AC says readings taken before the first time sync have `time_synced=false`, but a reading taken before the sync is still marked `true` once the same wake syncs (`dateBack()`, with its `ts` dated back). Not changed: two existing tests assert the current behaviour, `test/native/test_upload/test_main.cpp:118` (`test_time_is_synced_after_connecting_and_the_reading_dated_back`) and `test/native/test_levels/test_main.cpp:268` (`test_the_alert_is_dated_back_with_its_reading_once_the_time_is_synced`). Changing it needs the user's approval for those two tests.
+- **The HTTPS post still blocks `loop()`** inside the `wifi` and `alert` commands, for up to 2 × `HTTP_TIMEOUT_MS` (TLS handshake, then the response). Only the WiFi join and NTP waits are polled.
+- **`setup()`'s power-on wake waits on WiFi** (up to 2 × `WIFI_CONNECT_TIMEOUT_S` + NTP + HTTPS) before the command window opens.
+- **HIL `SERIAL_SESSION_IDLE_MS` is 20 s** in `esp32dev_hil`, short for typing by hand on that build.
+- **`CORE_DEBUG_LEVEL=2`** (warnings and errors) is set in the shipped `esp32dev` build.
+- **PEAP without a RADIUS server CA**: the eduroam join doesn't check the RADIUS server's certificate.
+- **`test_upload.py`'s `FIRST_REPLY_WITHIN_S` is hard-coded**, not derived from `config.h` like the other board-test limits.
+
 These need a decision from the installer.
 
 - **Timezone.** `config::TIMEZONE` is `"UTC0"`, so the photo slots (07:00, 12:00 …) would fire at UTC times. Set it to the site's POSIX TZ string.
@@ -45,6 +55,24 @@ These need a decision from the installer.
 - [ ] #20 retry: with WiFi out of range (or a wrong password in `secrets.h`), raise an ALERT as above: `@alert ok=0`. Bring WiFi back and let the next wake run: `@alert ok=1` with the same level and tilt, delivered once, and no `@alert` line on the wake after that.
 - [ ] #20 timing of the existing board tests: a wake with an alert to send makes one more HTTPS post (up to 2 × `HTTP_TIMEOUT_MS`). The limits in the hello, reading, sleep and upload tests (and `TIMER_WAKE_SLEEPS_WITHIN_S`) don't include it, so run them with the board flat after `baseline` (level OK, nothing pending). Changing those tests needs the user's approval.
 - [ ] #20 non-blocking `alert`: type `alert`, then `ping 1` straight away. `@pong 1` should come after `@alert`, and the board must not sleep while the alert is being sent.
+- [ ] Code review: alert queue in flash. On `esp32dev_hil` with WiFi out of range, raise ALERT, let it drop to OK, then raise WATCH (`@alert ok=0` each time). Bring WiFi back: the next wake should deliver both, ALERT first, and the wake after that prints no `@alert`. Also check `embedded/test_store_reboot` still passes (the Store's Preferences code was refactored).
+
+## 2026-10-16: Code review fixes (spec #14)
+
+One pass over the `core-build` code review. Behaviour fixes were built test-first at seam 2 (the wake cycle on the PC); **no existing test was changed**. New suites: `native/test_alert_queue` (5 tests), `native/test_command_effects` (2), `native/test_sleep_timer` (1). New fake members: the alert queue in `FakeStore` (it mirrors its oldest entry into the old `hasPendingAlert` / `pendingAlert` fields, so the #20 tests still see it) and `alertDropFails`.
+
+**Behaviour:**
+
+- **Alerts are queued, not overwritten.** A newer raise used to replace an alert still waiting for ntfy (an ALERT, then a drop, then a WATCH lost the ALERT). Now raised alerts go into a flash queue (`Store::alertPush/alertPeek/alertCount/alertReplaceNewest/alertDrop`; `Esp32Store` keeps it as one NVS blob, key `alerts`) and are sent oldest first, stopping at the first failure so the order holds. `config::ALERT_QUEUE_LEN` = 8 (not set by spec); when full, the oldest is dropped and `main.cpp` logs a `log_w` (`WakeResult::alertsDropped`). A pending alert left in the old `alert` key joins the queue. The old single-slot `Store` methods remain as defaults over the queue.
+  - **Decision: an escalation still waiting is folded.** WATCH then ALERT before either went out sends one ALERT (the newest entry is replaced). This keeps the existing #20 test `test_a_newer_alert_replaces_one_still_waiting`. Same or lower levels are never folded, so two ALERTs with a drop between, or an ALERT then a WATCH, are both delivered.
+  - **Send OK, clear failed:** the delivered alerts are counted in `RtcState::alertsUncleared`, cleared on a later wake and never sent again. That count is in RTC memory, so after a power loss in that rare case those alerts are sent once more: **ntfy delivery is at-least-once** there (exactly once otherwise).
+  - `WakeResult::alertsSent` counts what went out; `alertSent` means every waiting alert went; `alert` is the last one tried (one `@alert` line per wake, as before).
+- **`baseline` restarts the step rule.** After a new baseline, `LevelState::hasPrevious` is reset, so the old delta can't raise a false 0.5° step ALERT on the next wake.
+- **The `wifi` reading carries the current level** (`state.levels.level`) into its reply and its Supabase row, instead of always OK. A command reading still doesn't change the level.
+- **1 s minimum sleep in the core.** `runWakeCycle` never asks for a 0 s timer; the rule moved out of `Esp32Sleeper`.
+- **Not done: `time_synced` before the first sync** (see Open questions): two existing tests assert the current back-dating.
+
+**Tidy-ups (behaviour unchanged):** one `httpsPost()` helper in `Esp32Ports.cpp` for Supabase and ntfy (same CA check, timeouts and log text); `READING_JSON_BUF_SIZE` (640) in `ReadingJson.h` for the row buffer and body reserve; `isTestTag()` for every "is this a test" check, one `tag=` formatter in `TaggedReply.cpp`, one `wifi`/`alert` argument parser in `main.cpp`; `withPrefs()`/`getBlob()`/`putBlob()` for the `Preferences` begin/put/end pattern in `Esp32Store`; `isUtcValid()` in `Ports.h` shared by `Esp32Clock::isSynced` and the alert message; the ESP32 `pollConnect`/`pollSync` call `vTaskDelay(1)` while Pending, so the blocking `connect()`/`sync()` wrappers (documented as `setup()` and `runCommand` only) don't hog the CPU; `WifiCommand::command()` replaces `main.cpp`'s `netCommand` copy (the class keeps its name; a comment says it also runs `alert`).
 
 ## 2026-10-16: #20 Bare levels and ntfy alerts
 
