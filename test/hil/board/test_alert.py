@@ -15,12 +15,14 @@ import time
 import harness
 
 BOOT_WITHIN_S = 5
+# One HTTPS post: TLS connect/handshake and the response wait (config.h).
+HTTPS_POST_S = 2 * harness.config_number("HTTP_TIMEOUT_MS") // 1000
 # Before commands are read, the first wake cycle runs: up to 35 s of reading
-# (with no stored baseline) and its upload: up to 2 x 30 s of WiFi, 5 s NTP,
-# 10 s HTTPS (and 10 s more for a pending alert).
-FIRST_REPLY_WITHIN_S = 35 + 75 + 20
-# `alert`: up to 2 x 30 s to join, 5 s NTP, 10 s HTTPS, plus margin.
-ALERT_WITHIN_S = 60 + 5 + 10 + 15
+# (no stored baseline) + 10 s spare, its worst-case upload (85 s today), and a
+# pending alert's post (20 s).
+FIRST_REPLY_WITHIN_S = 45 + harness.upload_worst_case_s() + HTTPS_POST_S
+# `alert`: join, NTP and one post (the same worst case as an upload) + 15 s spare.
+ALERT_WITHIN_S = harness.upload_worst_case_s() + 15
 # The board said ok=1, so ntfy has it; give the poll a little time anyway.
 POLL_ATTEMPTS = 10
 POLL_INTERVAL_S = 1
