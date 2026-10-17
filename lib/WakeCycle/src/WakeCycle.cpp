@@ -246,6 +246,54 @@ void sendQueuedAlerts(RtcState& s, Ports& ports, WakeResult& result) {
                           : static_cast<uint8_t>(std::min<size_t>(delivered, UINT8_MAX));
 }
 
+// Keeps a reading that didn't reach the server in the offline buffer (#7). When
+// the buffer is full the oldest readings make room. Returns how many were dropped.
+size_t bufferReading(const Reading& r, const CycleConfig& cfg, Store& store) {
+  const size_t count = store.bufferCount();
+  size_t dropped = 0;
+  if (count >= cfg.bufferCapacity) {
+    dropped = count - cfg.bufferCapacity + 1;
+    store.bufferDrop(dropped);
+  }
+  store.bufferPush(r);  // a failed save is logged by the Store
+  return dropped;
+}
+
+// Sends the offline buffer, oldest first, then this wake's reading (needs the
+// uplink connected). Each post carries up to cfg.uploadBatchSize readings; the
+// buffered ones in it are dropped from flash only once the server has them, so
+// a post that fails part way loses nothing. It stops at the first refused post
+// and after cfg.uploadMaxBatchesPerWake posts, leaving the rest for the next
+// wake; this wake's reading is then buffered after them, keeping the order.
+// A reading the server took but whose drop from flash failed is sent again
+// later: Supabase ignores a (device_id, seq, boot_count) it already has.
+void uploadReadings(const Reading& reading, const CycleConfig& cfg, Ports& ports,
+                    WakeResult& result) {
+  Reading batch[config::UPLOAD_BATCH_SIZE];
+  const size_t batchSize =
+      std::max<size_t>(std::min<size_t>(cfg.uploadBatchSize, config::UPLOAD_BATCH_SIZE), 1);
+  for (size_t posts = 0; posts < cfg.uploadMaxBatchesPerWake && !result.uploaded; ++posts) {
+    const size_t waiting = ports.store.bufferCount();
+    size_t fromBuffer = 0;
+    while (fromBuffer < std::min(waiting, batchSize) &&
+           ports.store.bufferPeek(fromBuffer, batch[fromBuffer])) {
+      ++fromBuffer;
+    }
+    // This wake's reading goes in once everything before it is in the post (or
+    // the buffer can't be read: then it goes up on its own rather than not at all).
+    const bool withReading = fromBuffer < batchSize && (fromBuffer == waiting || fromBuffer == 0);
+    size_t n = fromBuffer;
+    if (withReading) batch[n++] = reading;
+    if (!ports.uplink.sendReadings(batch, n)) return;
+    result.readingsSent += n;
+    result.uploaded = withReading;
+    if (fromBuffer == 0) continue;
+    ports.store.bufferDrop(fromBuffer);
+    // A failed drop leaves them at the front: stop rather than send them again now.
+    if (ports.store.bufferCount() != waiting - fromBuffer) return;
+  }
+}
+
 }  // namespace
 
 bool isColdBoot(WakeCause cause) {
@@ -328,15 +376,24 @@ WakeResult runWakeCycle(WakeCause cause, RtcState& state, const CycleConfig& cfg
       result.alertSent = ports.uplink.sendAlert(raisedAlert);
       if (result.alertSent) ++result.alertsSent;
     }
-    result.uploaded = ports.uplink.sendReadings(&reading, 1);
+    uploadReadings(reading, cfg, ports, result);
   }
   ports.uplink.disconnect();
-  result.readingsSent = result.uploaded ? 1 : 0;
+  if (!result.uploaded && cfg.bufferCapacity > 0) {
+    result.bufferDropped = bufferReading(reading, cfg, ports.store);
+  }
+  result.readingsBuffered = ports.store.bufferCount();
 
   state.lastReading = reading;
   // Never a 0 s timer: the board must always wake again.
   result.nextWakeS = std::max<uint32_t>(cfg.normalIntervalS, 1);
   return result;
+}
+
+CycleConfig deviceCycleConfig() {
+  CycleConfig cfg;
+  cfg.bufferCapacity = config::BUFFER_CAPACITY;
+  return cfg;
 }
 
 CommandWindow::CommandWindow(WakeCause cause, uint32_t nowMs, const CycleConfig& cfg)
@@ -381,8 +438,17 @@ CommandResult runCommand(Command cmd, RtcState& state, const CycleConfig& cfg, P
       result.hasBaseline = ports.store.loadBaseline(result.baseline);
       result.hasAccelCalibration = ports.store.loadAccelCalibration(result.accelCalibration);
       result.reading = state.lastReading;
+      result.bufferCount = ports.store.bufferCount();
       result.ok = true;
       break;
+    case Command::ClearBuf: {
+      const size_t before = ports.store.bufferCount();
+      ports.store.bufferDrop(before);
+      result.bufferCount = ports.store.bufferCount();
+      result.bufferCleared = before - std::min(before, result.bufferCount);
+      result.ok = result.bufferCount == 0;
+      break;
+    }
     case Command::Wifi:
     case Command::Alert: {
       WifiCommand wifi;

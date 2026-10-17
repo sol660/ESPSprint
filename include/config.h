@@ -54,6 +54,11 @@ constexpr uint32_t UPLOAD_INTERVAL_S = 60 * 60;        // normal batching
 constexpr uint32_t EVENT_UPLOAD_INTERVAL_S = 5 * 60;   // in event mode
 constexpr uint32_t MOTION_UPLOAD_MIN_GAP_S = 10 * 60;  // cap on motion-triggered uploads
 constexpr size_t BUFFER_CAPACITY = 3000;  // ~4 weeks of 15-min readings; oldest dropped
+// Offline buffer uploads (#7): readings per HTTPS post, and posts per wake, so
+// a long backlog drains over a few wakes inside the 105 s upload watchdog
+// (each post is a TLS handshake plus up to ~25 rows of JSON). Not set by spec.
+constexpr size_t UPLOAD_BATCH_SIZE = 25;
+constexpr size_t UPLOAD_MAX_BATCHES_PER_WAKE = 8;
 // Alerts waiting for ntfy (WiFi down, ntfy refusing), kept in flash. Each
 // raised alert is delivered, oldest first; only when this many are waiting is
 // the oldest dropped (logged). Not set by spec.

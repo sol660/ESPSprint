@@ -78,6 +78,20 @@ void formatUploadLine(const Reading& r, bool ok, char* out, size_t size) {
                 static_cast<unsigned long>(r.seq), static_cast<unsigned long>(r.bootCount));
 }
 
+void formatBufferLine(size_t count, size_t sent, size_t dropped, char* out, size_t size) {
+  if (size == 0) return;
+  std::snprintf(out, size, "@buffer count=%lu sent=%lu dropped=%lu",
+                static_cast<unsigned long>(count), static_cast<unsigned long>(sent),
+                static_cast<unsigned long>(dropped));
+}
+
+void formatClearBufLine(const CommandResult& r, char* out, size_t size) {
+  if (size == 0) return;
+  std::snprintf(out, size, "@clearbuf ok=%d cleared=%lu count=%lu", r.ok ? 1 : 0,
+                static_cast<unsigned long>(r.bufferCleared),
+                static_cast<unsigned long>(r.bufferCount));
+}
+
 void formatSleepLine(uint32_t timerS, char* out, size_t size) {
   if (size == 0) return;
   std::snprintf(out, size, "@sleep s=%lu", static_cast<unsigned long>(timerS));
