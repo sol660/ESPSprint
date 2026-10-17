@@ -9,6 +9,10 @@ A running log of what changed, the decisions made along the way, and what's stil
 - **Large tilts read about 1.6× high (to check).** In the alert-queue check (2026-10-16, before calibration, against a baseline also taken before calibration) the installer lifted the board on a 93 mm pivot length with 19 mm and 46 mm objects: true asin(h / 93) = 11.8° and 29.6°, reported tilt delta 19.7° and 48.1°. A rough model of the −0.152 g Z offset only explains about 13–14° and 33°. Next step: repeat with the calibrated board, keeping one serial session open after a flat reset (no cold boot while tilted, so no ALERT), then `read` on each object, then put the board back flat before its next timer wake. Near 11.8°/29.6° means it was the offset plus the old baseline; still ~1.6× means look at the angle maths or the mounting before trusting the thresholds. The wedge jig (#12) covers small angles.
 - **Cross-axis error isn't calibrated.** Six positions give offset and scale per axis only. A module whose axes aren't quite square would need a 3 × 3 fit with more positions.
 
+From #24 (device token):
+
+- **`test_upload.py`'s key check inserts as `hil-key-check`,** so that id needs the device's token hash too (`SETUP.md`). Inserting under `DEVICE_ID` instead would remove that step, but changes an existing test: **needs the user's approval.**
+
 From #7 (offline buffer and sensor failure):
 
 - **`CycleConfig::bufferCapacity` defaults to 0 (no buffer); the device turns it on with `deviceCycleConfig()`.** Three existing tests pin the first build's "a failed upload drops the reading" (`native/test_upload`: `test_no_network_drops_the_reading_without_buffering`, `test_server_refusing_the_reading_drops_it`; both assert `hw.store.buffer.size() == 0`). They weren't changed (no approval), so the old behaviour stays visible to them through the default. Cleaner would be to default to `config::BUFFER_CAPACITY` and update those two tests: **needs the user's approval.**
@@ -84,6 +88,34 @@ These need a decision from the installer.
 - [ ] #9 OFFLINE badge on real data: leave the board unpowered for over 2 h (or look at the page after a gap) and check the badge shows; it should go away after the next upload.
 - [ ] #9 events on real data: after the #20 hand alert test, the events list should show OK → ALERT, then ALERT → OK after the reset (times in local time).
 
+- [ ] #24 schema: run `schema.sql` in the live project, twice (the second run must also say "Success": it is meant to be re-runnable), and store the token's hash (`SETUP.md` step 4). In the SQL Editor, `select * from private.device_tokens` shows the hashes; with the public key, `GET /rest/v1/device_tokens` and `/rest/v1/rpc/device_token_ok` must fail (the `private` schema isn't served).
+- [ ] #24 refused without the token: `.venv/Scripts/python.exe -m pytest test/hil/board/test_device_token.py`. Passes when no token and a wrong token get 401/403 with `42501`, and the right token inserts. If the no-token insert goes in, Supabase isn't passing `request.headers`; report it before changing the rule.
+- [ ] #24 right token on the board: flash `esp32dev` with `DEVICE_TOKEN` set, then `.venv/Scripts/python.exe -m pytest test/hil/board/test_upload.py` (both tests, unchanged) should pass. Also check a re-sent buffered reading (ignore-duplicates, #7) is still accepted with the token: for example `wifi` twice, or the #7 outage check, with no `HTTP 401/403` in the log.
+- [ ] #24 dashboard: the dashboard (public key, no token) still loads readings.
+- [ ] #24 old firmware is refused: a board flashed before #24 (no token) gets `Supabase insert failed: HTTP 401` (or 403) with `42501`, and its readings stay in the offline buffer until it is flashed with the token.
+
+## 2026-10-17: #24 Device token: only the device can insert readings
+
+The public key is in the dashboard (#9), so anyone could use it to add fake readings. Now an insert also needs the device's secret token.
+
+- **Firmware:** `DEVICE_TOKEN` in `include/secrets.h` (placeholder `your-device-token` in `secrets.example.h`, so CI builds). `Esp32Uplink` sends it on every Supabase post as the header `config::SUPABASE_DEVICE_TOKEN_HEADER` (`x-device-token`), next to `apikey`. The `on_conflict` and ignore-duplicates post from #7 is unchanged.
+- **`schema.sql`:** a `private` schema (not served by the API) holds `private.device_tokens` (`device_id`, `token_sha256` as lower-case hex). Anon and authenticated have no privilege on the table (and RLS is on with no policy). The insert policy is now `with check (private.device_token_ok(device_id))`: a `security definer` SQL function with an empty `search_path` that reads `x-device-token` from PostgREST's `current_setting('request.headers', true)` (unset or empty: false) and compares `extensions.digest(token, 'sha256')` (pgcrypto, created `if not exists` in `extensions`) with the stored hash. Anon only gets `usage` on `private` and `execute` on that function, which the policy needs because it runs as the caller. Select stays public, update and delete stay revoked. `INSERT ... ON CONFLICT DO NOTHING` checks the same insert policy on each new row, so the device's ignore-duplicates posts still work with the right token. Safe to re-run: every statement is `if not exists`, `create or replace`, `drop ... if exists` or a grant/revoke, and the stored hashes are kept.
+- **PC tests:** `test/hil/supabase_rest.py` reads `DEVICE_TOKEN` from `secrets.h` and sends it as `x-device-token` (user approved, 2026-10-17; no assertion changed). A `secrets.h` with no `DEVICE_TOKEN` line is refused with a clear message. `with_token(token)` gives a copy that sends another token, or none. New board test `test/hil/board/test_device_token.py` (needs no board, only the live project): an insert with no token, and one with a wrong token, for the real `DEVICE_ID`, must be refused by the rules (HTTP 401/403, code `42501`) and not appear; the same kind of row with the right token must go in and be readable with no token (as the dashboard reads). Self-check `test_device_token_selfcheck.py` (13): the helper sends the header on the wire (a local HTTP server), and the board test fails when tokens aren't checked, any token will do, the right token is refused too, the refusal is another error, a refused row is stored anyway, or `secrets.h` still has the placeholder or no token. `fake_supabase.py` can model tokens (`device_tokens=`); it is off by default, so the existing self-checks see the same table as before.
+- **Not checked against a real database:** there is no Postgres on the dev PC, so `schema.sql` hasn't been run anywhere yet (see "Still to verify").
+
+Decisions made without the user (safest option, open to change):
+
+- **`hil-key-check` needs the token too.** `test_upload.py`'s key check inserts under `device_id = 'hil-key-check'`, and changing that test needs approval. So `SETUP.md` stores the same hash for `hil-key-check` as for the device. Cleaner would be for that test to insert under `DEVICE_ID`: **needs the user's approval.**
+- **The token is made on the PC** (Python `secrets.token_hex(24)`, 48 hex characters) and only its hash is pasted into the SQL Editor, so the token never goes into Supabase's query history.
+- **A placeholder token isn't refused by `from_secrets()`** (the existing self-check builds a helper from the template with only the URL and key filled in). The new board test fails on the placeholder instead, and the upload tests would fail with Supabase's refusal.
+
+**Human steps (before the board tests run again):**
+
+1. Run the new `supabase/schema.sql` in the live project's SQL Editor ("Success. No rows returned").
+2. Make a token and its hash (`supabase/SETUP.md` step 4) and store the hash for your `DEVICE_ID` and for `hil-key-check`.
+3. Put `DEVICE_TOKEN` in `include/secrets.h` (one line).
+4. Flash `esp32dev`. Until then the board's uploads are refused and go into the offline buffer (#7); they are sent once it has the token.
+
 ## 2026-10-17: #7 Offline buffer and fault handling
 
 Built test-first at the wake-cycle seam (PC) and the reply formatters; the Store adapter has an on-board test that hasn't run yet. **No existing test was changed**, and `Fakes.h` wasn't touched (the new suites subclass the fakes).
@@ -117,7 +149,7 @@ Decisions made without the user (safest option, open to change):
 - **CSP meta tag:** scripts only from the page itself and the two CDNs, data only from `https://*.supabase.co`. A custom Supabase domain would need adding to `connect-src` in `index.html`.
 - **Icons** are drawn by a throwaway script (not committed): a green square with a slope and a leaning post.
 
-Open question: the public key the page uses can also **insert** readings (the device uses the same key, `schema.sql`), so anyone who reads it from the page could add fake rows. That was already true of the device key; fixing it would need a separate device key or a check in the database.
+~~Open question: the public key the page uses can also **insert** readings (the device uses the same key, `schema.sql`), so anyone who reads it from the page could add fake rows. That was already true of the device key; fixing it would need a separate device key or a check in the database.~~ **Addressed 2026-10-17 by #24** (device token).
 
 ## 2026-10-16: #22 Six-position accelerometer calibration
 
