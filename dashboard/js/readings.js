@@ -18,6 +18,24 @@ export function usableReadings(rows) {
     .sort((a, b) => tsMs(a) - tsMs(b));
 }
 
+// Series for the two charts, oldest first, as { x: ms since 1970, y } points.
+// A missing value (sensor error) is y: null, which the chart draws as a gap.
+// watch/alert are flat lines across the loaded time range.
+export function chartData(rows, cfg) {
+  const usable = usableReadings(rows);
+  const series = (key) => usable.map((r) => ({ x: tsMs(r), y: r[key] ?? null }));
+  const span = usable.length ? [tsMs(usable[0]), tsMs(usable[usable.length - 1])] : [];
+  const flat = (y) => span.map((x) => ({ x, y }));
+  return {
+    pitch: series("pitch_d"),
+    roll: series("roll_d"),
+    tilt: series("tilt_d"),
+    temp: series("temp_c"),
+    watch: flat(cfg.watchDeg),
+    alert: flat(cfg.alertDeg),
+  };
+}
+
 // The events list, newest first. Each event is
 //   { kind: "level", ts, from, to, tilt }        level differs from the reading before
 //   { kind: "shock" | "sensor_error", ts, tilt } from the event column
