@@ -57,10 +57,20 @@ Reading measureTilt(const CycleConfig& cfg, uint8_t windows, uint32_t timeLimitM
   double sum[3] = {0, 0, 0};
   double noiseSum = 0;
   int accepted = 0;
+  bool retried = false;
+  bool sensorFailed = false;
   Window w;
-  while (accepted < windows &&
-         clock.uptimeMs() - startMs < timeLimitMs &&
-         readWindow(imu, cfg.windowSamples, cal, w)) {
+  while (accepted < windows && clock.uptimeMs() - startMs < timeLimitMs) {
+    if (!readWindow(imu, cfg.windowSamples, cal, w)) {
+      // The MPU6050 stopped answering (#7): reset the I2C bus and try once
+      // more. The window it broke off is thrown away.
+      if (!retried) {
+        retried = true;
+        if (imu.resetBus()) continue;
+      }
+      sensorFailed = true;
+      break;
+    }
     if (w.maxAccelStdG > cfg.stillAccelStdG || w.maxGyroStdDps > cfg.stillGyroStdDps) continue;
     for (int k = 0; k < 3; ++k) sum[k] += w.mean[k];
     noiseSum += w.maxAccelStdG;
@@ -69,6 +79,9 @@ Reading measureTilt(const CycleConfig& cfg, uint8_t windows, uint32_t timeLimitM
 
   Reading r{};
   r.stable = accepted >= windows;
+  // Still failing after the bus reset: the reading goes out as a sensor error
+  // (any windows taken before the failure keep their angles).
+  if (sensorFailed) r.event = ReadingEvent::SensorError;
   r.accelCalibrated = cal != nullptr;
   if (meanOut) {
     for (int k = 0; k < 3; ++k) meanOut[k] = accepted > 0 ? sum[k] / accepted : 0;
