@@ -101,8 +101,16 @@ function timeAxis() {
     type: "linear",
     ticks: {
       maxTicksLimit: 5,
+      maxRotation: 0,
       color: cssVar("--muted"),
-      callback: (v) => new Date(v).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }),
+      // Two lines (date, then time), so labels fit a phone without slanting.
+      callback: (v) => {
+        const d = new Date(v);
+        return [
+          d.toLocaleDateString(undefined, { day: "numeric", month: "short" }),
+          d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }),
+        ];
+      },
     },
     grid: { color: cssVar("--line") },
   };
