@@ -123,22 +123,48 @@ bool writeBufferHeader(const char* ns, const BufferHeader& h) {
   return ok;
 }
 
+// Size of a file, 0 when it doesn't exist. The handle is closed again.
+size_t fileSize(const String& path) {
+  if (!LittleFS.exists(path)) return 0;
+  File f = LittleFS.open(path, "r");
+  if (!f) return 0;
+  const size_t size = f.size();
+  f.close();
+  return size;
+}
+
+// Reads the record in ring slot `slot` of /<ns>.buf.
+bool readSlot(const char* ns, uint32_t slot, Reading& out) {
+  File f = LittleFS.open(bufferPath(ns, ".buf"), "r");
+  const bool ok = f && f.seek(static_cast<size_t>(slot) * sizeof(Reading)) &&
+                  f.read(reinterpret_cast<uint8_t*>(&out), sizeof out) == sizeof out;
+  if (f) f.close();
+  return ok;
+}
+
+// Writes the record in ring slot `slot` of /<ns>.buf. The ring only grows into
+// the file at its end, so the slot is either inside the file (overwrite) or
+// exactly at its end (append); a slot past the end is refused.
+bool writeSlot(const char* ns, uint32_t slot, const Reading& r) {
+  const String path = bufferPath(ns, ".buf");
+  const size_t offset = static_cast<size_t>(slot) * sizeof(Reading);
+  const size_t size = fileSize(path);
+  if (offset > size) return false;
+  const bool inside = offset < size;
+  File f = LittleFS.open(path, inside ? "r+" : "a");
+  const bool ok = f && (!inside || f.seek(offset)) &&
+                  f.write(reinterpret_cast<const uint8_t*>(&r), sizeof r) == sizeof r;
+  if (f) f.close();
+  return ok;
+}
+
 }  // namespace
 
 bool Esp32Store::bufferPush(const Reading& r) {
   BufferHeader h;
   bool ok = readBufferHeader(ns_, h);
   if (ok) {
-    const uint32_t slot = (h.head + h.count) % h.capacity;
-    const String path = bufferPath(ns_, ".buf");
-    const size_t offset = static_cast<size_t>(slot) * sizeof(Reading);
-    const size_t fileSize = LittleFS.exists(path) ? LittleFS.open(path, "r").size() : 0;
-    // The ring only grows into the file at its end, so the slot is either inside
-    // the file (overwrite) or exactly at its end (append).
-    File f = offset < fileSize ? LittleFS.open(path, "r+") : LittleFS.open(path, "a");
-    ok = f && (offset >= fileSize || f.seek(offset)) && (offset <= fileSize) &&
-         f.write(reinterpret_cast<const uint8_t*>(&r), sizeof r) == sizeof r;
-    if (f) f.close();
+    ok = writeSlot(ns_, (h.head + h.count) % h.capacity, r);
     if (ok) {
       if (h.count < h.capacity) {
         ++h.count;
@@ -160,11 +186,7 @@ size_t Esp32Store::bufferCount() {
 bool Esp32Store::bufferPeek(size_t index, Reading& out) {
   BufferHeader h;
   if (!readBufferHeader(ns_, h) || index >= h.count) return false;
-  const size_t slot = (h.head + index) % h.capacity;
-  File f = LittleFS.open(bufferPath(ns_, ".buf"), "r");
-  const bool ok = f && f.seek(slot * sizeof(Reading)) &&
-                  f.read(reinterpret_cast<uint8_t*>(&out), sizeof out) == sizeof out;
-  if (f) f.close();
+  const bool ok = readSlot(ns_, static_cast<uint32_t>((h.head + index) % h.capacity), out);
   if (!ok) log_e("offline buffer read failed at %u", static_cast<unsigned>(index));
   return ok;
 }
@@ -172,13 +194,7 @@ bool Esp32Store::bufferPeek(size_t index, Reading& out) {
 // Rewrites the oldest record in place (its refusal count); the header is unchanged.
 bool Esp32Store::bufferReplaceOldest(const Reading& r) {
   BufferHeader h;
-  bool ok = readBufferHeader(ns_, h) && h.count > 0;
-  if (ok) {
-    File f = LittleFS.open(bufferPath(ns_, ".buf"), "r+");
-    ok = f && f.seek(static_cast<size_t>(h.head) * sizeof(Reading)) &&
-         f.write(reinterpret_cast<const uint8_t*>(&r), sizeof r) == sizeof r;
-    if (f) f.close();
-  }
+  const bool ok = readBufferHeader(ns_, h) && h.count > 0 && writeSlot(ns_, h.head, r);
   if (!ok) log_e("offline buffer: refusal count of reading %lu not saved", static_cast<unsigned long>(r.seq));
   return ok;
 }
