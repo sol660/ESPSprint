@@ -334,6 +334,9 @@ bool Esp32Uplink::sendReadings(const Reading* readings, size_t count) {
         http.addHeader("Content-Type", "application/json");
         http.addHeader("Prefer", "return=minimal,resolution=ignore-duplicates");
         http.addHeader("apikey", secrets::SUPABASE_KEY);
+        // Only rows carrying this device's token are accepted (#24): the public
+        // key alone, which the dashboard shows, can't insert.
+        http.addHeader(config::SUPABASE_DEVICE_TOKEN_HEADER, secrets::DEVICE_TOKEN);
         // Legacy anon keys are JWTs and also go in Authorization; new publishable
         // keys (sb_publishable_...) go in apikey only.
         if (strncmp(secrets::SUPABASE_KEY, "eyJ", 3) == 0) {

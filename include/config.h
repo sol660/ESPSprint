@@ -139,5 +139,8 @@ constexpr const char* SUPABASE_READINGS_PATH = "/rest/v1/readings";
 // inserts with ON CONFLICT (device_id, seq, boot_count) DO NOTHING, which needs
 // only the insert privilege. Must name schema.sql's unique key exactly.
 constexpr const char* SUPABASE_READINGS_UPSERT_QUERY = "?on_conflict=device_id,seq,boot_count";
+// Header carrying secrets::DEVICE_TOKEN on every insert (#24). schema.sql's
+// insert rule reads it from PostgREST's request.headers (lower-case name).
+constexpr const char* SUPABASE_DEVICE_TOKEN_HEADER = "x-device-token";
 
 }  // namespace config

@@ -26,7 +26,7 @@ The workflow `.github/workflows/dashboard-pages.yml` publishes the page. It only
 
 1. On GitHub, open the repo's **Settings → Pages** and set **Source** to **GitHub Actions**.
    - This repo is private, and GitHub Pages on a private repo needs GitHub Pro (free for students with the GitHub Student Developer Pack). Otherwise the repo has to be made public first. Even a site from a private repo is public to anyone with the link.
-   - The page only holds the public key, which the database rules already let anyone use to read readings (and insert them). That is the "public read access" the spec asks for.
+   - The page only holds the public key, which the database rules already let anyone use to read readings. Inserting also needs the device token (#24), which is never in the page. That is the "public read access" the spec asks for.
 2. **Settings → Secrets and variables → Actions**:
    - **Variables** tab: add `SUPABASE_URL` and `DEVICE_ID`.
    - **Secrets** tab: add `SUPABASE_PUBLIC_KEY` (the anon or publishable key). The workflow refuses a secret or `service_role` key.
