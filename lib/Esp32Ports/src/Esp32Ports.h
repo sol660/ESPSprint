@@ -49,6 +49,7 @@ class Esp32Store : public Store {
   size_t bufferCount() override;
   bool bufferPeek(size_t index, Reading& out) override;
   void bufferDrop(size_t count) override;
+  bool bufferReplaceOldest(const Reading& r) override;
   // The alert queue: one NVS blob of up to config::ALERT_QUEUE_LEN Alerts.
   size_t alertCount() override;
   bool alertPeek(size_t index, Alert& out) override;
@@ -72,9 +73,11 @@ class Esp32Uplink : public Uplink {
   void disconnect() override;
   bool sendReadings(const Reading* readings, size_t count) override;
   bool sendAlert(const Alert& alert) override;
+  bool lastSendRefused() override { return lastRefused_; }
 
  private:
   void beginNetwork();
+  bool lastRefused_ = false;  // the last sendReadings got HTTP 400/409/413/422
   size_t network_ = 0;  // index into secrets::WIFI_NETWORKS being tried
   size_t networks_ = 0;  // how many are tried (at most config::WIFI_MAX_NETWORKS)
   uint32_t networkStartMs_ = 0;

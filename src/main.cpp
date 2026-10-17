@@ -108,7 +108,7 @@ static void printCommandResult(Command cmd, const CommandResult& r) {
   Serial.println(reply);
   if (r.uploadTried) printUpload(r.reading, r.uploaded);
   if (cmd == Command::Status) {  // `@buffer count=` after `@status` (#7)
-    formatBufferLine(r.bufferCount, 0, 0, reply, sizeof reply);
+    formatBufferLine(r.bufferCount, 0, 0, 0, reply, sizeof reply);
     Serial.println(reply);
   }
 }
@@ -224,10 +224,15 @@ void setup() {
     log_w("offline buffer full: %u oldest reading(s) dropped",
           static_cast<unsigned>(wake.bufferDropped));
   }
-  if (cycleConfig.bufferCapacity > 0) {  // `@buffer count= sent= dropped=` (#7)
-    char bufferLine[64];
-    formatBufferLine(wake.readingsBuffered, wake.readingsSent, wake.bufferDropped, bufferLine,
-                     sizeof bufferLine);
+  if (wake.bufferSkipped > 0) {
+    log_w("offline buffer: %u reading(s) skipped, refused by the server on %u wakes",
+          static_cast<unsigned>(wake.bufferSkipped),
+          static_cast<unsigned>(cycleConfig.bufferMaxRefusals));
+  }
+  if (cycleConfig.bufferCapacity > 0) {  // `@buffer count= sent= dropped= skipped=` (#7)
+    char bufferLine[80];
+    formatBufferLine(wake.readingsBuffered, wake.readingsSent, wake.bufferDropped,
+                     wake.bufferSkipped, bufferLine, sizeof bufferLine);
     Serial.println(bufferLine);
   }
 

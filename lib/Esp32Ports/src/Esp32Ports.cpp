@@ -68,7 +68,7 @@ namespace {
 
 constexpr uint32_t BUFFER_MAGIC = 0x46554245;  // "EBUF"
 // Bump when Reading's layout changes: an old buffer is then started again.
-constexpr uint16_t BUFFER_LAYOUT_VERSION = 1;
+constexpr uint16_t BUFFER_LAYOUT_VERSION = 2;  // 2: Reading::uploadRefusals
 
 struct BufferHeader {
   uint32_t magic;
@@ -166,6 +166,20 @@ bool Esp32Store::bufferPeek(size_t index, Reading& out) {
                   f.read(reinterpret_cast<uint8_t*>(&out), sizeof out) == sizeof out;
   if (f) f.close();
   if (!ok) log_e("offline buffer read failed at %u", static_cast<unsigned>(index));
+  return ok;
+}
+
+// Rewrites the oldest record in place (its refusal count); the header is unchanged.
+bool Esp32Store::bufferReplaceOldest(const Reading& r) {
+  BufferHeader h;
+  bool ok = readBufferHeader(ns_, h) && h.count > 0;
+  if (ok) {
+    File f = LittleFS.open(bufferPath(ns_, ".buf"), "r+");
+    ok = f && f.seek(static_cast<size_t>(h.head) * sizeof(Reading)) &&
+         f.write(reinterpret_cast<const uint8_t*>(&r), sizeof r) == sizeof r;
+    if (f) f.close();
+  }
+  if (!ok) log_e("offline buffer: refusal count of reading %lu not saved", static_cast<unsigned long>(r.seq));
   return ok;
 }
 
@@ -290,6 +304,7 @@ void Esp32Uplink::disconnect() {
 }
 
 bool Esp32Uplink::sendReadings(const Reading* readings, size_t count) {
+  lastRefused_ = false;
   if (WiFi.status() != WL_CONNECTED || count == 0) return false;
 
   const UploadHealth health{secrets::DEVICE_ID, config::FW_VERSION, resetReasonName(), true,
@@ -301,6 +316,7 @@ bool Esp32Uplink::sendReadings(const Reading* readings, size_t count) {
   for (size_t i = 0; i < count; ++i) {
     if (encodeReadingJson(readings[i], health, row, sizeof row) == 0) {
       log_e("reading %lu too long to encode", static_cast<unsigned long>(readings[i].seq));
+      lastRefused_ = true;  // that reading can never go up: treated like a refused row (#7)
       return false;
     }
     if (i > 0) body += ',';
@@ -324,7 +340,12 @@ bool Esp32Uplink::sendReadings(const Reading* readings, size_t count) {
           http.addHeader("Authorization", String("Bearer ") + secrets::SUPABASE_KEY);
         }
       },
-      [](int code) { return code == 201 || code == 200 || code == 204; });
+      [this](int code) {
+        // The server refused the rows themselves (bad JSON, a check or not-null
+        // constraint, too large): the core then looks for the bad one (#7).
+        lastRefused_ = code == 400 || code == 409 || code == 413 || code == 422;
+        return code == 201 || code == 200 || code == 204;
+      });
 }
 
 // ntfy (spec #1 "Alerts"): one HTTPS POST of the message to the secret topic,
