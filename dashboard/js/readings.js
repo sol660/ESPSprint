@@ -18,6 +18,27 @@ export function usableReadings(rows) {
     .sort((a, b) => tsMs(a) - tsMs(b));
 }
 
+// The events list, newest first. Each event is
+//   { kind: "level", ts, from, to, tilt }        level differs from the reading before
+//   { kind: "shock" | "sensor_error", ts, tilt } from the event column
+// The first loaded reading never counts as a level change: what came before
+// it isn't loaded.
+export function eventsFrom(rows) {
+  const usable = usableReadings(rows);
+  const events = [];
+  usable.forEach((r, i) => {
+    const tilt = r.tilt_d ?? null;
+    const prev = usable[i - 1];
+    if (prev && prev.level !== r.level) {
+      events.push({ kind: "level", ts: r.ts, from: prev.level, to: r.level, tilt });
+    }
+    if (r.event === "shock" || r.event === "sensor_error") {
+      events.push({ kind: r.event, ts: r.ts, tilt });
+    }
+  });
+  return events.reverse();
+}
+
 // What the status card and the OFFLINE badge show.
 // offline: no reading, or the newest is more than offlineAfterMinutes old.
 export function statusOf(rows, now, cfg) {
