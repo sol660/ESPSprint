@@ -55,8 +55,12 @@ constexpr uint32_t EVENT_UPLOAD_INTERVAL_S = 5 * 60;   // in event mode
 constexpr uint32_t MOTION_UPLOAD_MIN_GAP_S = 10 * 60;  // cap on motion-triggered uploads
 constexpr size_t BUFFER_CAPACITY = 3000;  // ~4 weeks of 15-min readings; oldest dropped
 // Offline buffer uploads (#7): readings per HTTPS post, and posts per wake, so
-// a long backlog drains over a few wakes inside the 105 s upload watchdog
-// (each post is a TLS handshake plus up to ~25 rows of JSON). Not set by spec.
+// a long backlog drains over a few wakes and no wake's upload runs on without
+// a limit (each post is a TLS handshake plus up to ~25 rows of JSON). Not set
+// by spec. This does NOT keep a wake inside WATCHDOG_UPLOAD_S (105 s), and no
+// watchdog is armed: at the timeouts below the worst case is 2 x 30 s WiFi +
+// 5 s NTP + 8 x 10 s posts + 10 s reading + 10 s ntfy = 165 s (see
+// docs/improvements.md, Open questions).
 constexpr size_t UPLOAD_BATCH_SIZE = 25;
 constexpr size_t UPLOAD_MAX_BATCHES_PER_WAKE = 8;  // every post counts, also the retries below
 // A buffered reading the server refuses for its content (HTTP 4xx) on this many
@@ -119,11 +123,11 @@ constexpr size_t PHOTO_SLOT_COUNT = sizeof(PHOTO_SLOTS) / sizeof(PHOTO_SLOTS[0])
 // POSIX TZ string for the site's local time (photo slots). TODO: set to the site's zone.
 constexpr const char* TIMEZONE = "UTC0";
 
-// Time limits
+// Time limits (spec budgets; no watchdog is armed with them yet)
 constexpr uint32_t WATCHDOG_READING_S = 45;   // reading-only wakes
 constexpr uint32_t WATCHDOG_UPLOAD_S = 105;   // wakes that use WiFi
-// WiFi (spec #14): home, then school, 30 s each. 2 x 30 s + NTP + HTTPS fits
-// inside the 105 s upload watchdog.
+// WiFi (spec #14): home, then school, 30 s each. 2 x 30 s + NTP + one HTTPS
+// post fits inside the 105 s upload budget; a backlog of posts doesn't (above).
 constexpr uint32_t WIFI_CONNECT_TIMEOUT_S = 30;  // per network
 constexpr uint8_t WIFI_MAX_NETWORKS = 2;  // the first 2 of secrets::WIFI_NETWORKS
 constexpr const char* NTP_SERVER_1 = "pool.ntp.org";
