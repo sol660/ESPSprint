@@ -78,6 +78,11 @@ These need a decision from the installer.
 - [ ] #7 `clearbuf` and `status`: with readings buffered, `status` prints `@buffer count=<n> sent=0 dropped=0`; `clearbuf` prints `@clearbuf ok=1 cleared=<n> count=0`, and a following `status` shows `count=0`.
 - [ ] #7 sensor failure: unplug the MPU6050's SDA (or the whole module) and press EN. The log should show "resetting the I2C bus", then "still not answering", the human line "SENSOR ERROR", and the Supabase row `event=sensor_error`, `stable=false`, with rssi/boot/reset/fw filled. Plug it back and press EN: a normal reading. Also check a wake with the sensor missing still fits the 45 s/105 s watchdog budgets (it should be quicker than a normal one).
 - [ ] #7 backlog timing: a full post is 25 rows (about 10 KB of JSON) and a wake sends at most 8 posts. Time a wake that sends a large backlog (for example 200 buffered on `esp32dev_hil`) and check it stays well inside the 105 s upload watchdog; lower `UPLOAD_MAX_BATCHES_PER_WAKE` if not. Also check heap: the post body is a `String` reserved for 25 × 640 bytes.
+- [ ] #9 dashboard, local: copy `dashboard/config.example.js` to `dashboard/config.js` with the real URL, public key and device id (`dashboard/README.md`), serve it (`python -m http.server 8000 --directory dashboard`) and open <http://localhost:8000/>. The status card should match the newest row of `real_readings`, and the browser console should show no errors. Only checked against made-up data so far.
+- [ ] #9 publish: set up Pages as in `dashboard/README.md` (the repo is private: needs GitHub Pro / Student Pack, or a public repo), run the "Dashboard to GitHub Pages" workflow once, and check the published `config.js` holds only the public key.
+- [ ] #9 loads real data in iPhone Safari and Android Chrome (both light and dark mode), and **Add to Home Screen** works on both, with the green slope icon and the page opening full screen.
+- [ ] #9 OFFLINE badge on real data: leave the board unpowered for over 2 h (or look at the page after a gap) and check the badge shows; it should go away after the next upload.
+- [ ] #9 events on real data: after the #20 hand alert test, the events list should show OK → ALERT, then ALERT → OK after the reset (times in local time).
 
 ## 2026-10-17: #7 Offline buffer and fault handling
 
@@ -92,6 +97,27 @@ Built test-first at the wake-cycle seam (PC) and the reply formatters; the Store
 - **Device config:** `main.cpp` now runs everything with `deviceCycleConfig()` (`CycleConfig` defaults plus `bufferCapacity = BUFFER_CAPACITY`); see Open questions for why the default is 0.
 - **Tests:** `native/test_offline_buffer` (13: buffered when down or refused, sent in order and emptied, identity and time kept, full buffer drops the oldest, failure part way loses and duplicates nothing, a long backlog over several wakes, a failed drop resends later, the device config, `clearbuf` and its flash error, `status` count, the two lines). `native/test_sensor_error` (6: no answer gives `sensor_error`, level unchanged, buffered offline, recovery after a reset gives a normal reading, a later failure after a reset that worked, a working sensor is never reset). `embedded/test_buffer_reboot` (survives a reboot in order, drop then push, clear). 139 native tests pass (before merging #9).
 - **Not done:** hourly batching, dating back buffered readings from before the first sync, and skipping a row Supabase always refuses (all in Open questions). No board test (pytest) for the buffer: the outage check is manual, in "Still to verify".
+
+## 2026-10-17: #9 Minimal dashboard
+
+A static page in `dashboard/` (`index.html`, `style.css`, small ES modules in `js/`) that reads the `real_readings` view for `deviceId`, newest 1000 rows, with the Supabase JS client 2.45.4 and Chart.js 4.4.1 from CDNs (exact versions, SRI hashes). It shows the status card, the tilt chart (pitch, roll, combined, dashed WATCH/ALERT lines), the temperature chart, the events list and the OFFLINE badge. Phone-first, light and dark mode, web manifest plus apple-touch icon and meta tags for the home screen. No login, no service worker. Refreshes every 5 min and when the page comes back to the front. `?demo` and `?demo=offline` show made-up data without Supabase. Photos are left for #10.
+
+- **Config:** `dashboard/config.js` (git-ignored, template `config.example.js`): Supabase URL, public key, device id, thresholds, OFFLINE limit (120 min), rows to load, refresh interval. Without it the page says how to create it.
+- **Tests:** `node --test dashboard/test/*.test.js` (Node's built-in runner, nothing to install), 36 tests, one skipped until `config.js` exists. They cover `js/readings.js` (status/OFFLINE, events, chart series), `js/format.js`, the demo data, `scripts/make-config.js`, and `test/thresholds.test.js`, which reads `WATCH_DEG`/`ALERT_DEG` out of `include/config.h` and fails if `config.example.js` (or `config.js`) differs. CI runs them on Node 20 (new step in `ci.yml`). Node isn't installed on the dev PC: locally they were run with VS Code's bundled Node 24 (`ELECTRON_RUN_AS_NODE=1 Code.exe --test ...`).
+- **Checked locally:** served with `python -m http.server` and loaded in headless Chrome at phone width: demo data, demo offline, and the real Supabase code path against a fake PostgREST response (local mock, then removed). All rendered with no console errors. Not yet tried on real data or a real phone (see "Still to verify").
+- **Publishing:** `.github/workflows/dashboard-pages.yml` builds `config.js` from repo variables `SUPABASE_URL`, `DEVICE_ID` and secret `SUPABASE_PUBLIC_KEY`, and deploys to GitHub Pages. It runs only when started by hand (`workflow_dispatch`), so it can't run, or turn anything red, before the user sets it up. `make-config.js` refuses a key that isn't public (`sb_secret_...` or a JWT whose role isn't `anon`). Nothing was enabled or published.
+
+Decisions made without the user (safest option, open to change):
+
+- **Rows with an unset clock are left out** (`ts` before 2023-11-14, `config::CLOCK_VALID_AFTER_UTC`): they'd plot at 1970. Rows with `time_synced=false` but a back-dated real `ts` are kept.
+- **OFFLINE uses the newest reading's `ts`**, not `received_at`, as the issue's acceptance criterion says. Since uploads are hourly, the badge can appear up to an hour later than the 2 h, in the worst case.
+- **The first loaded reading is never a level change** (what came before isn't loaded), so a WATCH that began more than 1000 readings ago shows on the card but not in the events.
+- **Threshold lines only at +WATCH and +ALERT.** Levels apply to the combined tilt delta, which is never negative; pitch and roll can go negative, but no line is drawn below zero.
+- **Thresholds live in `config.js`** (as the ticket asks), checked against `config.h` by a test, rather than generated from it.
+- **CSP meta tag:** scripts only from the page itself and the two CDNs, data only from `https://*.supabase.co`. A custom Supabase domain would need adding to `connect-src` in `index.html`.
+- **Icons** are drawn by a throwaway script (not committed): a green square with a slope and a leaning post.
+
+Open question: the public key the page uses can also **insert** readings (the device uses the same key, `schema.sql`), so anyone who reads it from the page could add fake rows. That was already true of the device key; fixing it would need a separate device key or a check in the database.
 
 ## 2026-10-16: #22 Six-position accelerometer calibration
 

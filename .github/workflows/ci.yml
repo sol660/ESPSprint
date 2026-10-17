@@ -41,6 +41,14 @@ jobs:
           python scripts/setup_venv.py
           .venv/bin/python -m pytest test/hil/selfcheck
 
+      # Dashboard logic and the threshold check against config.h (no install needed).
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Dashboard tests
+        run: node --test dashboard/test/*.test.js
+
       - name: Firmware build (esp32dev)
         run: pio run -e esp32dev
 

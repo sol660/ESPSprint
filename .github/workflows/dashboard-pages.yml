@@ -1,0 +1,59 @@
+name: Dashboard to GitHub Pages
+
+# Publishes dashboard/ to GitHub Pages. It only runs when started by hand
+# (Actions tab -> "Dashboard to GitHub Pages" -> Run workflow), and only works
+# after the one-time setup in dashboard/README.md: Pages source set to
+# "GitHub Actions", and the SUPABASE_URL / DEVICE_ID variables and the
+# SUPABASE_PUBLIC_KEY secret added to the repo.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Dashboard tests
+        run: node --test dashboard/test/*.test.js
+
+      # Refuses anything but a public (anon / publishable) key.
+      - name: Write config.js
+        env:
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_PUBLIC_KEY }}
+          DEVICE_ID: ${{ vars.DEVICE_ID }}
+        run: node dashboard/scripts/make-config.js
+
+      # Only the files the page needs (no tests or scripts).
+      - name: Collect the site
+        run: |
+          mkdir _site
+          cp -r dashboard/index.html dashboard/style.css dashboard/manifest.webmanifest \
+                dashboard/config.js dashboard/config.example.js dashboard/js dashboard/icons _site/
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
