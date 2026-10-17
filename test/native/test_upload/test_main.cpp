@@ -5,7 +5,7 @@
 #include "fakes/Fakes.h"
 
 // Upload, first build (spec #14): every reading is uploaded straight away. A
-// failed upload is reported and the reading dropped (no buffer yet). The `wifi`
+// failed upload is reported and the reading kept in the offline buffer (#7). The `wifi`
 // command connects, takes a reading and uploads it with a test tag.
 
 static CycleConfig testConfig() {
@@ -54,7 +54,7 @@ void test_timer_wakes_upload_too() {
   TEST_ASSERT_EQUAL(1, hw.uplink.batchesSent.size());
 }
 
-void test_no_network_drops_the_reading_without_buffering() {
+void test_no_network_keeps_the_reading_in_the_offline_buffer() {
   FakeHardware hw;
   stillBoard(hw);
   hw.uplink.up = false;
@@ -66,12 +66,13 @@ void test_no_network_drops_the_reading_without_buffering() {
   TEST_ASSERT_TRUE(r.uploadTried);
   TEST_ASSERT_FALSE(r.uploaded);
   TEST_ASSERT_EQUAL(0, r.readingsSent);
-  TEST_ASSERT_EQUAL(0, hw.store.buffer.size());
+  TEST_ASSERT_EQUAL(1, hw.store.buffer.size());  // #7: kept for the next upload
+  TEST_ASSERT_EQUAL_UINT32(r.reading.seq, hw.store.buffer[0].seq);
   TEST_ASSERT_EQUAL(1, hw.uplink.disconnects);
   TEST_ASSERT_EQUAL_UINT32(15 * 60, r.nextWakeS);  // sleeps as normal
 }
 
-void test_server_refusing_the_reading_drops_it() {
+void test_server_refusing_the_reading_keeps_it_in_the_offline_buffer() {
   FakeHardware hw;
   stillBoard(hw);
   hw.uplink.acceptsReadings = false;
@@ -80,7 +81,7 @@ void test_server_refusing_the_reading_drops_it() {
   WakeResult r = runWakeCycle(WakeCause::Timer, state, testConfig(), hw.ports());
 
   TEST_ASSERT_FALSE(r.uploaded);
-  TEST_ASSERT_EQUAL(0, hw.store.buffer.size());
+  TEST_ASSERT_EQUAL(1, hw.store.buffer.size());  // #7: kept for the next upload
   TEST_ASSERT_FALSE(hw.uplink.connected);
 }
 
@@ -205,8 +206,8 @@ int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_every_reading_is_uploaded_straight_away);
   RUN_TEST(test_timer_wakes_upload_too);
-  RUN_TEST(test_no_network_drops_the_reading_without_buffering);
-  RUN_TEST(test_server_refusing_the_reading_drops_it);
+  RUN_TEST(test_no_network_keeps_the_reading_in_the_offline_buffer);
+  RUN_TEST(test_server_refusing_the_reading_keeps_it_in_the_offline_buffer);
   RUN_TEST(test_reading_before_the_first_time_sync_is_marked_unsynced);
   RUN_TEST(test_time_is_synced_after_connecting_and_the_reading_dated_back);
   RUN_TEST(test_an_already_synced_reading_keeps_its_time);

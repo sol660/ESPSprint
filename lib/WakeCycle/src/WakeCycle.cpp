@@ -403,11 +403,7 @@ WakeResult runWakeCycle(WakeCause cause, RtcState& state, const CycleConfig& cfg
   return result;
 }
 
-CycleConfig deviceCycleConfig() {
-  CycleConfig cfg;
-  cfg.bufferCapacity = config::BUFFER_CAPACITY;
-  return cfg;
-}
+CycleConfig deviceCycleConfig() { return CycleConfig{}; }
 
 CommandWindow::CommandWindow(WakeCause cause, uint32_t nowMs, const CycleConfig& cfg)
     : fromMs_(nowMs), forMs_(cfg.commandWindowMs), idleMs_(cfg.sessionIdleMs) {

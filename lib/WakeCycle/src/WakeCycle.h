@@ -84,16 +84,14 @@ struct CycleConfig {
   float calScaleMin = config::CAL_SCALE_MIN;
   float calScaleMax = config::CAL_SCALE_MAX;
   float calOffsetMaxG = config::CAL_OFFSET_MAX_G;
-  // Offline buffer (#7): readings kept in flash while uploads fail. 0 = no
-  // buffer (a failed upload drops the reading, the first build's behaviour);
-  // the device uses deviceCycleConfig(), which sets config::BUFFER_CAPACITY.
-  size_t bufferCapacity = 0;
+  // Offline buffer (#7): readings kept in flash while uploads fail; when full
+  // the oldest are dropped. 0 = no buffer (a failed upload drops the reading).
+  size_t bufferCapacity = config::BUFFER_CAPACITY;
   size_t uploadBatchSize = config::UPLOAD_BATCH_SIZE;  // at most config::UPLOAD_BATCH_SIZE
   size_t uploadMaxBatchesPerWake = config::UPLOAD_MAX_BATCHES_PER_WAKE;
 };
 
-// The configuration the device runs with: CycleConfig's defaults plus the
-// offline buffer (bufferCapacity = config::BUFFER_CAPACITY).
+// The configuration the device runs with: CycleConfig's defaults.
 CycleConfig deviceCycleConfig();
 
 // When an awake board may go to sleep (spec #14 "Command window and sleep").
