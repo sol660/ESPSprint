@@ -1,6 +1,7 @@
 #include "Esp32Ports.h"
 
 #include <HTTPClient.h>
+#include <LittleFS.h>
 #include <Preferences.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
@@ -50,10 +51,134 @@ Progress Esp32Clock::pollSync() {
 }
 
 bool Esp32Store::loadCalibration(TempCalibration&) { return false; }
-bool Esp32Store::bufferPush(const Reading&) { return false; }
-size_t Esp32Store::bufferCount() { return 0; }
-bool Esp32Store::bufferPeek(size_t, Reading&) { return false; }
-void Esp32Store::bufferDrop(size_t) {}
+
+// ---- Esp32Store offline buffer (#7): a ring of Readings in a LittleFS file ----
+//
+// NVS (~20 KB) can't hold config::BUFFER_CAPACITY readings, so the buffer
+// lives on LittleFS in the default partition table's data partition (label
+// "spiffs", ~1.4 MB). Two files per namespace:
+//  - /<ns>.buf: up to BUFFER_CAPACITY fixed-size records (raw Reading structs),
+//    written in ring order; it only grows up to its full size;
+//  - /<ns>.bhd: BufferHeader (where the oldest record is and how many there are).
+// A push writes its record, then the header; a drop writes only the header.
+// LittleFS commits a file only on close, so a power loss leaves the old header
+// (at worst the reading being pushed is lost, never the buffer).
+
+namespace {
+
+constexpr uint32_t BUFFER_MAGIC = 0x46554245;  // "EBUF"
+// Bump when Reading's layout changes: an old buffer is then started again.
+constexpr uint16_t BUFFER_LAYOUT_VERSION = 1;
+
+struct BufferHeader {
+  uint32_t magic;
+  uint16_t version;
+  uint16_t recordSize;
+  uint32_t capacity;
+  uint32_t head;   // slot of the oldest reading
+  uint32_t count;  // readings in the buffer
+};
+
+bool mountFs() {
+  static bool mounted = false;
+  if (!mounted) {
+    mounted = LittleFS.begin(true);  // formats the partition the first time
+    if (!mounted) log_e("LittleFS mount failed: no offline buffer this wake");
+  }
+  return mounted;
+}
+
+String bufferPath(const char* ns, const char* ext) { return String("/") + ns + ext; }
+
+BufferHeader emptyHeader() {
+  return {BUFFER_MAGIC, BUFFER_LAYOUT_VERSION, static_cast<uint16_t>(sizeof(Reading)),
+          static_cast<uint32_t>(config::BUFFER_CAPACITY), 0, 0};
+}
+
+// The header, or an empty one when there is none (or it is from another layout).
+bool readBufferHeader(const char* ns, BufferHeader& h) {
+  h = emptyHeader();
+  if (!mountFs()) return false;
+  const String path = bufferPath(ns, ".bhd");
+  if (!LittleFS.exists(path)) return true;
+  File f = LittleFS.open(path, "r");
+  BufferHeader stored{};
+  const bool read = f && f.read(reinterpret_cast<uint8_t*>(&stored), sizeof stored) == sizeof stored;
+  if (f) f.close();
+  if (read && stored.magic == BUFFER_MAGIC && stored.version == BUFFER_LAYOUT_VERSION &&
+      stored.recordSize == sizeof(Reading) && stored.capacity == config::BUFFER_CAPACITY &&
+      stored.head < stored.capacity && stored.count <= stored.capacity) {
+    h = stored;
+  } else {
+    log_w("offline buffer header unreadable or from another firmware: starting it again");
+  }
+  return true;
+}
+
+bool writeBufferHeader(const char* ns, const BufferHeader& h) {
+  File f = LittleFS.open(bufferPath(ns, ".bhd"), "w");
+  if (!f) return false;
+  const bool ok = f.write(reinterpret_cast<const uint8_t*>(&h), sizeof h) == sizeof h;
+  f.close();
+  return ok;
+}
+
+}  // namespace
+
+bool Esp32Store::bufferPush(const Reading& r) {
+  BufferHeader h;
+  bool ok = readBufferHeader(ns_, h);
+  if (ok) {
+    const uint32_t slot = (h.head + h.count) % h.capacity;
+    const String path = bufferPath(ns_, ".buf");
+    const size_t offset = static_cast<size_t>(slot) * sizeof(Reading);
+    const size_t fileSize = LittleFS.exists(path) ? LittleFS.open(path, "r").size() : 0;
+    // The ring only grows into the file at its end, so the slot is either inside
+    // the file (overwrite) or exactly at its end (append).
+    File f = offset < fileSize ? LittleFS.open(path, "r+") : LittleFS.open(path, "a");
+    ok = f && (offset >= fileSize || f.seek(offset)) && (offset <= fileSize) &&
+         f.write(reinterpret_cast<const uint8_t*>(&r), sizeof r) == sizeof r;
+    if (f) f.close();
+    if (ok) {
+      if (h.count < h.capacity) {
+        ++h.count;
+      } else {
+        h.head = (h.head + 1) % h.capacity;  // full: the oldest is overwritten
+      }
+      ok = writeBufferHeader(ns_, h);
+    }
+  }
+  if (!ok) log_e("offline buffer save failed: reading %lu lost", static_cast<unsigned long>(r.seq));
+  return ok;
+}
+
+size_t Esp32Store::bufferCount() {
+  BufferHeader h;
+  return readBufferHeader(ns_, h) ? h.count : 0;
+}
+
+bool Esp32Store::bufferPeek(size_t index, Reading& out) {
+  BufferHeader h;
+  if (!readBufferHeader(ns_, h) || index >= h.count) return false;
+  const size_t slot = (h.head + index) % h.capacity;
+  File f = LittleFS.open(bufferPath(ns_, ".buf"), "r");
+  const bool ok = f && f.seek(slot * sizeof(Reading)) &&
+                  f.read(reinterpret_cast<uint8_t*>(&out), sizeof out) == sizeof out;
+  if (f) f.close();
+  if (!ok) log_e("offline buffer read failed at %u", static_cast<unsigned>(index));
+  return ok;
+}
+
+void Esp32Store::bufferDrop(size_t count) {
+  BufferHeader h;
+  if (!readBufferHeader(ns_, h) || count == 0 || h.count == 0) return;
+  const uint32_t n = count < h.count ? static_cast<uint32_t>(count) : h.count;
+  h.head = (h.head + n) % h.capacity;
+  h.count -= n;
+  // Empty: start at slot 0 again. The file keeps its size; slot 0 is inside it.
+  if (h.count == 0) h.head = 0;
+  if (!writeBufferHeader(ns_, h)) log_e("offline buffer clear failed: those readings are sent again");
+}
 // ---- Esp32Uplink: WiFi + Supabase REST ----
 
 namespace {
@@ -183,12 +308,15 @@ bool Esp32Uplink::sendReadings(const Reading* readings, size_t count) {
   }
   body += ']';
 
-  const String url = String(secrets::SUPABASE_URL) + config::SUPABASE_READINGS_PATH;
+  // A reading the server already has (a re-sent buffered one) is skipped, not
+  // an error, so the rest of the post still goes in (#7).
+  const String url = String(secrets::SUPABASE_URL) + config::SUPABASE_READINGS_PATH +
+                     config::SUPABASE_READINGS_UPSERT_QUERY;
   return httpsPost(
       "Supabase insert", url, reinterpret_cast<const uint8_t*>(body.c_str()), body.length(),
       [](HTTPClient& http) {
         http.addHeader("Content-Type", "application/json");
-        http.addHeader("Prefer", "return=minimal");
+        http.addHeader("Prefer", "return=minimal,resolution=ignore-duplicates");
         http.addHeader("apikey", secrets::SUPABASE_KEY);
         // Legacy anon keys are JWTs and also go in Authorization; new publishable
         // keys (sb_publishable_...) go in apikey only.
@@ -320,9 +448,37 @@ bool Esp32Imu::readTemperatureC(float& out) {
 
 bool Esp32Imu::setMotionThreshold(float) { return false; }  // wake-on-motion: #5
 
-bool Esp32Imu::resetBus() {  // full bus recovery: #7
+// I2C bus recovery (#7): a reset ESP32 or a glitch can leave the MPU6050 halfway
+// through a byte, holding SDA low. Up to 9 SCL clocks let it finish, then a STOP
+// frees the bus, and the sensor is set up again. A few hundred microseconds.
+bool Esp32Imu::resetBus() {
+  log_w("MPU6050 not answering: resetting the I2C bus");
   Wire.end();
-  return begin();
+  const uint8_t sda = config::PIN_I2C_SDA;
+  const uint8_t scl = config::PIN_I2C_SCL;
+  constexpr uint32_t HALF_CLOCK_US = 5;  // 100 kHz
+  pinMode(sda, INPUT_PULLUP);
+  pinMode(scl, OUTPUT_OPEN_DRAIN);
+  digitalWrite(scl, HIGH);
+  for (int i = 0; i < 9 && digitalRead(sda) == LOW; ++i) {
+    digitalWrite(scl, LOW);
+    delayMicroseconds(HALF_CLOCK_US);
+    digitalWrite(scl, HIGH);
+    delayMicroseconds(HALF_CLOCK_US);
+  }
+  // STOP: SDA low to high while SCL is high.
+  pinMode(sda, OUTPUT_OPEN_DRAIN);
+  digitalWrite(sda, LOW);
+  delayMicroseconds(HALF_CLOCK_US);
+  digitalWrite(scl, HIGH);
+  delayMicroseconds(HALF_CLOCK_US);
+  digitalWrite(sda, HIGH);
+  delayMicroseconds(HALF_CLOCK_US);
+  pinMode(sda, INPUT);
+  pinMode(scl, INPUT);
+  const bool ok = begin();
+  if (!ok) log_e("MPU6050 still not answering after the I2C bus reset");
+  return ok;
 }
 
 // ---- Esp32Store: flash via Preferences (NVS) ----

@@ -9,6 +9,8 @@
 RTC_DATA_ATTR RtcState rtcState;
 
 static Esp32Ports hw;
+// What the device runs with, including the offline buffer (#7).
+static const CycleConfig cycleConfig = deviceCycleConfig();
 // This boot's wake-cycle result: the timer to sleep for once the window closes.
 static WakeResult wake;
 // Replaced in setup() with this boot's real cause and start time.
@@ -21,9 +23,13 @@ static void printReading(const Reading& r) {
   Serial.printf("tilt delta pitch %+.3f roll %+.3f deg | raw pitch %+.3f roll %+.3f | noise %.4f g | %s\n",
                 r.pitchDeg, r.rollDeg, r.pitchRaw, r.rollRaw, r.noise,
                 r.stable ? "stable" : "UNSTABLE");
+  if (r.event == ReadingEvent::SensorError) {
+    Serial.println("SENSOR ERROR: MPU6050 not answering on I2C, even after a bus reset");
+  }
 }
 
-// `@upload ok= tag= seq= boot=`. ok=0: the reading was dropped (no buffer yet).
+// `@upload ok= tag= seq= boot=`. ok=0: the reading wasn't uploaded (a wake
+// reading is then kept in the offline buffer; a `wifi` test reading is not).
 static void printUpload(const Reading& r, bool ok) {
   char line[80];
   formatUploadLine(r, ok, line, sizeof line);
@@ -57,6 +63,19 @@ static void printCommandResult(Command cmd, const CommandResult& r) {
     printAlert(r.alert, r.alertSent);
     return;
   }
+  char reply[200];
+  if (cmd == Command::ClearBuf) {
+    if (r.ok) {
+      Serial.printf("offline buffer emptied: %u reading(s) removed\n",
+                    static_cast<unsigned>(r.bufferCleared));
+    } else {
+      Serial.printf("clearbuf failed (flash error): %u reading(s) still buffered\n",
+                    static_cast<unsigned>(r.bufferCount));
+    }
+    formatClearBufLine(r, reply, sizeof reply);
+    Serial.println(reply);
+    return;
+  }
   if (!r.ok) {
     Serial.println("failed (unit moving, or flash write error)");
   } else {
@@ -73,13 +92,14 @@ static void printCommandResult(Command cmd, const CommandResult& r) {
       } else {
         Serial.println("no accel calibration stored (`cal`)");
       }
+      Serial.printf("offline buffer: %u reading(s) waiting to upload\n",
+                    static_cast<unsigned>(r.bufferCount));
     }
     if (cmd != Command::Baseline) printReading(r.reading);
   }
 
   // Tagged reply for board tests (ADR 0001): `read` -> @read, `baseline`/`status` -> @status.
   // `wifi` -> @read then @upload.
-  char reply[200];
   if (cmd == Command::Read || cmd == Command::Wifi) {
     formatReadReply(r, reply, sizeof reply);
   } else {
@@ -87,6 +107,10 @@ static void printCommandResult(Command cmd, const CommandResult& r) {
   }
   Serial.println(reply);
   if (r.uploadTried) printUpload(r.reading, r.uploaded);
+  if (cmd == Command::Status) {  // `@buffer count=` after `@status` (#7)
+    formatBufferLine(r.bufferCount, 0, 0, reply, sizeof reply);
+    Serial.println(reply);
+  }
 }
 
 // `cal <face|save|clear>` (#22): what happened, then the tagged `@cal` reply.
@@ -132,7 +156,7 @@ static void handleCommand(const char* line) {
         Serial.printf("capturing face %s: keep the unit still with that axis up...\n",
                       calFaceName(face));
       }
-      printCalResult(runCalCommand(step, face, rtcState, CycleConfig{}, hw.ports));
+      printCalResult(runCalCommand(step, face, rtcState, cycleConfig, hw.ports));
     } else {
       Serial.println("cal: +x, -x, +y, -y, +z, -z (that axis pointing up), save or clear");
     }
@@ -158,9 +182,12 @@ static void handleCommand(const char* line) {
     Serial.println("capturing baseline: keep the unit still...");
   } else if (strcmp(line, "status") == 0) {
     cmd = Command::Status;
+  } else if (strcmp(line, "clearbuf") == 0) {
+    cmd = Command::ClearBuf;
   } else {
     Serial.println(
-        "commands: read, baseline, status, cal <face|save|clear>, wifi [tag], alert [n], ping <n>");
+        "commands: read, baseline, status, cal <face|save|clear>, wifi [tag], alert [n], clearbuf, "
+        "ping <n>");
     window.commandHandled(millis());
     return;
   }
@@ -170,7 +197,7 @@ static void handleCommand(const char* line) {
     window.commandStarted();
     return;
   }
-  printCommandResult(cmd, runCommand(cmd, rtcState, CycleConfig{}, hw.ports));
+  printCommandResult(cmd, runCommand(cmd, rtcState, cycleConfig, hw.ports));
   window.commandHandled(millis());  // after the command: a slow one doesn't eat the idle time
 }
 
@@ -185,7 +212,7 @@ void setup() {
 
   if (!hw.imu.begin()) log_e("MPU6050 init failed: check SDA21/SCL22 wiring");
 
-  wake = runWakeCycle(boot.cause, rtcState, CycleConfig{}, hw.ports);
+  wake = runWakeCycle(boot.cause, rtcState, cycleConfig, hw.ports);
   printReading(wake.reading);
   if (wake.alertsDropped > 0) {
     log_w("alert queue full: %u oldest undelivered alert(s) dropped",
@@ -193,16 +220,26 @@ void setup() {
   }
   if (wake.alertTried) printAlert(wake.alert, wake.alertSent);
   if (wake.uploadTried) printUpload(wake.reading, wake.uploaded);
+  if (wake.bufferDropped > 0) {
+    log_w("offline buffer full: %u oldest reading(s) dropped",
+          static_cast<unsigned>(wake.bufferDropped));
+  }
+  if (cycleConfig.bufferCapacity > 0) {  // `@buffer count= sent= dropped=` (#7)
+    char bufferLine[64];
+    formatBufferLine(wake.readingsBuffered, wake.readingsSent, wake.bufferDropped, bufferLine,
+                     sizeof bufferLine);
+    Serial.println(bufferLine);
+  }
 
   // Listening starts now, after the wake cycle, so the installer gets the whole
   // window. Commands typed during the cycle wait in the UART buffer.
-  window = CommandWindow(boot.cause, millis(), CycleConfig{});
+  window = CommandWindow(boot.cause, millis(), cycleConfig);
 }
 
 void loop() {
   if (wifiCommand.busy()) {
     // Polled, never waited on. Typed input waits in the UART buffer meanwhile.
-    if (wifiCommand.poll(rtcState, CycleConfig{}, hw.ports)) {
+    if (wifiCommand.poll(rtcState, cycleConfig, hw.ports)) {
       printCommandResult(wifiCommand.command(), wifiCommand.result());
       window.commandHandled(millis());
     }

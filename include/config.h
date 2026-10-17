@@ -130,5 +130,9 @@ constexpr uint32_t CLOCK_VALID_AFTER_UTC = 1700000000;
 constexpr uint32_t HTTP_TIMEOUT_MS = 10 * 1000;
 // Supabase REST endpoint for the readings table (supabase/schema.sql).
 constexpr const char* SUPABASE_READINGS_PATH = "/rest/v1/readings";
+// Re-sent readings (#7): with `Prefer: resolution=ignore-duplicates`, PostgREST
+// inserts with ON CONFLICT (device_id, seq, boot_count) DO NOTHING, which needs
+// only the insert privilege. Must name schema.sql's unique key exactly.
+constexpr const char* SUPABASE_READINGS_UPSERT_QUERY = "?on_conflict=device_id,seq,boot_count";
 
 }  // namespace config
