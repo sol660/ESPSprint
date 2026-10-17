@@ -109,3 +109,97 @@ def test_a_copy_with_another_token_sends_that_one(recording_server):
     db.with_token("not-the-token").insert({"seq": 1})
 
     assert seen[-1].get("x-device-token") == "not-the-token"
+
+
+# ---- the board token test, against a fake Supabase ----
+
+RIGHT = "c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00"
+
+
+def load_token_tests():
+    spec = importlib.util.spec_from_file_location("token_under_check", TOKEN_TEST_FILE)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def run_token_check(supabase):
+    """Runs the board token test; returns the exception it raised, or None."""
+    test = getattr(load_token_tests(), TOKEN_TEST)
+    try:
+        test(supabase)
+    except BaseException as e:  # noqa: BLE001 - a skip must be caught and reported too
+        return e
+    return None
+
+
+def assert_failed(result):
+    assert result is not None, "token test PASSED against bad rules: guard broken"
+    assert isinstance(result, (AssertionError, pytest.fail.Exception)), (
+        f"token test must FAIL, but ended with {type(result).__name__}: {result}")
+
+
+def checked_db(cls=FakeSupabase, device_id="node-01", token=RIGHT):
+    """Rules that check the token: only `token`, stored for `device_id`, inserts its rows."""
+    return cls(device_tokens={device_id: token}, token=token)
+
+
+class AnyTokenWillDo(FakeSupabase):
+    """Refuses a missing header, but takes any token at all."""
+
+    def insert_with_token(self, row, token):
+        return super().insert_with_token(row, RIGHT if token is not None else None)
+
+
+class RefusesWithAnotherError(FakeSupabase):
+    """A bad token gets 404 (for example a missing table), not the rules' refusal."""
+
+    def insert_with_token(self, row, token):
+        status, body = super().insert_with_token(row, token)
+        if status == 401:
+            return 404, {"code": "42P01", "message": 'relation "public.readings" does not exist'}
+        return status, body
+
+
+class StoresButSaysRefused(FakeSupabase):
+    """Answers 401 for a bad token, yet the row goes in."""
+
+    def insert_with_token(self, row, token):
+        status, body = super().insert_with_token(row, token)
+        if status == 401:
+            self.rows.append(dict(row))
+        return status, body
+
+
+def test_token_check_passes_when_only_the_right_token_inserts():
+    # Positive control: the failures below must come from the checks, not a test that can't pass.
+    assert run_token_check(checked_db()) is None
+
+
+def test_token_check_fails_when_tokens_are_not_checked():
+    assert_failed(run_token_check(FakeSupabase(token=RIGHT)))
+
+
+def test_token_check_fails_when_any_token_is_accepted():
+    assert_failed(run_token_check(checked_db(AnyTokenWillDo)))
+
+
+def test_token_check_fails_when_the_right_token_is_refused_too():
+    # The token is stored for another device id, so every insert is refused.
+    assert_failed(run_token_check(checked_db(device_id="node-02")))
+
+
+def test_token_check_fails_when_the_refusal_is_another_error():
+    assert_failed(run_token_check(checked_db(RefusesWithAnotherError)))
+
+
+def test_token_check_fails_when_a_refused_row_is_stored_anyway():
+    assert_failed(run_token_check(checked_db(StoresButSaysRefused)))
+
+
+def test_token_check_fails_when_secrets_still_hold_the_example_token():
+    assert_failed(run_token_check(checked_db(token="your-device-token")))
+
+
+def test_token_check_fails_with_no_token_in_secrets():
+    assert_failed(run_token_check(checked_db(token=None)))

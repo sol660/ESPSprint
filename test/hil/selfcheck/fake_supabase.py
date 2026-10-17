@@ -16,12 +16,16 @@ class FakeSupabase:
     insert and select work; update and delete are refused with HTTP 401."""
 
     def __init__(self, device_id="node-01", update_accepted=False, delete_accepted=False,
-                 update_silently_applied=False):
+                 update_silently_applied=False, device_tokens=None, token="fake-device-token"):
         self.device_id = device_id
         self.rows = []
         self.update_accepted = update_accepted    # changes rows and says so
         self.delete_accepted = delete_accepted    # deletes rows and says so
         self.update_silently_applied = update_silently_applied  # changes rows, says nothing
+        # Device token (#24): {device_id: token} whose rows need that token in
+        # x-device-token; None (the default) checks no token at all, as before #24.
+        self.device_tokens = device_tokens
+        self.token = token  # what this client sends, like SupabaseRest.token
 
     def _tagged(self, tag):
         return [r for r in self.rows if r.get("test_tag") == str(tag)]
@@ -30,8 +34,21 @@ class FakeSupabase:
         return [dict(r) for r in self._tagged(tag)]
 
     def insert(self, row):
+        return self.insert_with_token(row, self.token)
+
+    def insert_with_token(self, row, token):
+        """The rules: with device_tokens set, a row goes in only with its device's token."""
+        if self.device_tokens is not None and (
+                token is None or self.device_tokens.get(row.get("device_id")) != token):
+            return 401, {"code": "42501",
+                         "message": 'new row violates row-level security policy for table '
+                                    '"readings"'}
         self.rows.append(dict(row))
         return 201, None
+
+    def with_token(self, token):
+        """The same table, seen by a client that sends `token` (None: no header)."""
+        return _TokenClient(self, token)
 
     def update_tagged(self, tag, values):
         if self.update_accepted or self.update_silently_applied:
@@ -46,6 +63,24 @@ class FakeSupabase:
             self.rows = [r for r in self.rows if r.get("test_tag") != str(tag)]
             return 200, gone
         return 401, {"code": "42501", "message": "permission denied for table readings"}
+
+
+class _TokenClient:
+    """FakeSupabase.with_token(): shares the table, sends its own token."""
+
+    def __init__(self, db, token):
+        self.db = db
+        self.token = token
+        self.device_id = db.device_id
+
+    def insert(self, row):
+        return self.db.insert_with_token(row, self.token)
+
+    def rows_with_tag(self, tag):
+        return self.db.rows_with_tag(tag)
+
+    def with_token(self, token):
+        return _TokenClient(self.db, token)
 
 
 def iso(seconds):
