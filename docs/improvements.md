@@ -11,7 +11,7 @@ A running log of what changed, the decisions made along the way, and what's stil
 
 From #24 (device token):
 
-- **`test_upload.py`'s key check inserts as `hil-key-check`,** so that id needs the device's token hash too (`SETUP.md`). Inserting under `DEVICE_ID` instead would remove that step, but changes an existing test: **needs the user's approval.**
+- ~~**`test_upload.py`'s key check inserts as `hil-key-check`**~~ **Resolved 2026-10-17 (user approved changing the test):** it now inserts under `DEVICE_ID` (still a tagged test row, so `real_readings` hides it), and `SETUP.md` stores one hash.
 
 From #7 (offline buffer and sensor failure):
 
@@ -106,14 +106,14 @@ The public key is in the dashboard (#9), so anyone could use it to add fake read
 
 Decisions made without the user (safest option, open to change):
 
-- **`hil-key-check` needs the token too.** `test_upload.py`'s key check inserts under `device_id = 'hil-key-check'`, and changing that test needs approval. So `SETUP.md` stores the same hash for `hil-key-check` as for the device. Cleaner would be for that test to insert under `DEVICE_ID`: **needs the user's approval.**
+- **The key check inserts under `DEVICE_ID`** (user approval, 2026-10-17; it was `hil-key-check`), so only the device's own token hash is stored.
 - **The token is made on the PC** (Python `secrets.token_hex(24)`, 48 hex characters) and only its hash is pasted into the SQL Editor, so the token never goes into Supabase's query history.
 - **A placeholder token isn't refused by `from_secrets()`** (the existing self-check builds a helper from the template with only the URL and key filled in). The new board test fails on the placeholder instead, and the upload tests would fail with Supabase's refusal.
 
 **Human steps (before the board tests run again):**
 
 1. Run the new `supabase/schema.sql` in the live project's SQL Editor ("Success. No rows returned").
-2. Make a token and its hash (`supabase/SETUP.md` step 4) and store the hash for your `DEVICE_ID` and for `hil-key-check`.
+2. Make a token and its hash (`supabase/SETUP.md` step 4) and store the hash for your `DEVICE_ID`.
 3. Put `DEVICE_TOKEN` in `include/secrets.h` (one line).
 4. Flash `esp32dev`. Until then the board's uploads are refused and go into the offline buffer (#7); they are sent once it has the token.
 

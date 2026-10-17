@@ -38,15 +38,14 @@ The public key is also in the dashboard, where anyone can read it, so the key al
    ```
 
 2. Put the **token** in `DEVICE_TOKEN` in `include/secrets.h` (one line, in quotes, like the other values). Don't paste it anywhere else.
-3. In Supabase's **SQL Editor**, store the **hash** (not the token). Replace `<hash>` twice, and `node-01` if your `DEVICE_ID` is different:
+3. In Supabase's **SQL Editor**, store the **hash** (not the token). Replace `<hash>`, and `node-01` if your `DEVICE_ID` is different:
 
    ```sql
    insert into private.device_tokens (device_id, token_sha256)
-   values ('node-01', '<hash>'), ('hil-key-check', '<hash>')
+   values ('node-01', '<hash>')
    on conflict (device_id) do update set token_sha256 = excluded.token_sha256;
    ```
 
-   `hil-key-check` is the device id the PC's key check in `test_upload.py` inserts under, so it needs the same token.
 4. Flash the firmware again so the board has the token.
 
 To change the token (for example if it leaked), do steps 1 to 4 again: the new hash replaces the old one, and the old token stops working straight away. If you lose the token, make a new one the same way. Don't add the `private` schema to the exposed schemas in **Project Settings → Data API**: it must stay hidden from the API.
