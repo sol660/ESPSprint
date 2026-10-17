@@ -1,10 +1,11 @@
 """Supabase's REST API from the PC, with the device's own key (spec #14, story 41).
 
-The URL, key and device ID come from include/secrets.h, the same file the
-firmware is built with, so secrets live in one place. Only the standard
-library is used.
+The URL, key, device token (#24) and device ID come from include/secrets.h,
+the same file the firmware is built with, so secrets live in one place. Only
+the standard library is used.
 """
 
+import copy
 import json
 import re
 import urllib.error
@@ -26,16 +27,25 @@ def read_secrets(path=SECRETS):
 class SupabaseRest:
     """The readings table, seen with the device's (insert-only) key."""
 
-    def __init__(self, url, key, device_id, timeout_s=20):
+    def __init__(self, url, key, device_id, timeout_s=20, token=None):
         self.base = url.rstrip("/") + "/rest/v1/readings"
         self.key = key
         self.device_id = device_id
         self.timeout_s = timeout_s
+        self.token = token  # sent as x-device-token, as the firmware does (#24); None: no header
+
+    def with_token(self, token):
+        """A copy that sends `token` instead (None: no x-device-token header at all)."""
+        other = copy.copy(self)
+        other.token = token
+        return other
 
     def _headers(self, prefer=None):
         h = {"apikey": self.key, "Content-Type": "application/json"}
         if self.key.startswith("eyJ"):  # legacy anon key (a JWT); the firmware does the same
             h["Authorization"] = "Bearer " + self.key
+        if self.token is not None:
+            h["x-device-token"] = self.token
         if prefer:
             h["Prefer"] = prefer
         return h
@@ -84,9 +94,11 @@ def from_secrets(path=SECRETS):
         raise ValueError(f"{path} is missing: copy include/secrets.example.h to it and fill in "
                          "the Supabase URL and key (supabase/SETUP.md)")
     s = read_secrets(path)
-    missing = [k for k in ("SUPABASE_URL", "SUPABASE_KEY", "DEVICE_ID") if not s.get(k)]
+    missing = [k for k in ("SUPABASE_URL", "SUPABASE_KEY", "DEVICE_TOKEN", "DEVICE_ID")
+               if not s.get(k)]
     if missing:
         raise ValueError(f"{path} has no {', '.join(missing)}")
     if any(p in s["SUPABASE_URL"] + s["SUPABASE_KEY"] for p in PLACEHOLDERS):
         raise ValueError(f"{path} still has the example Supabase URL/key: see supabase/SETUP.md")
-    return SupabaseRest(s["SUPABASE_URL"], s["SUPABASE_KEY"], s["DEVICE_ID"])
+    return SupabaseRest(s["SUPABASE_URL"], s["SUPABASE_KEY"], s["DEVICE_ID"],
+                        token=s["DEVICE_TOKEN"])
