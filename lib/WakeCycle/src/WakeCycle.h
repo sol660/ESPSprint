@@ -89,6 +89,7 @@ struct CycleConfig {
   size_t bufferCapacity = config::BUFFER_CAPACITY;
   size_t uploadBatchSize = config::UPLOAD_BATCH_SIZE;  // at most config::UPLOAD_BATCH_SIZE
   size_t uploadMaxBatchesPerWake = config::UPLOAD_MAX_BATCHES_PER_WAKE;
+  uint8_t bufferMaxRefusals = config::BUFFER_MAX_REFUSALS;  // 0 = never skip
 };
 
 // The configuration the device runs with: CycleConfig's defaults.
@@ -129,6 +130,7 @@ struct WakeResult {
   bool uploaded = false;
   size_t readingsBuffered = 0;  // readings in the offline buffer after this wake
   size_t bufferDropped = 0;     // oldest buffered readings dropped because it was full (log them)
+  size_t bufferSkipped = 0;     // buffered readings dropped after bufferMaxRefusals refusals (log them)
   bool alertTried = false;  // a notification was due (new or pending): print `@alert ok=`
   bool alertSent = false;   // ntfy took every waiting one; false: the rest stay in flash for the next wake
   size_t alertsSent = 0;    // how many ntfy took this wake, oldest first

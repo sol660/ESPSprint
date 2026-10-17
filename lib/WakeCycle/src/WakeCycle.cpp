@@ -275,35 +275,97 @@ size_t bufferReading(const Reading& r, const CycleConfig& cfg, Store& store) {
 // Sends the offline buffer, oldest first, then this wake's reading (needs the
 // uplink connected). Each post carries up to cfg.uploadBatchSize readings; the
 // buffered ones in it are dropped from flash only once the server has them, so
-// a post that fails part way loses nothing. It stops at the first refused post
-// and after cfg.uploadMaxBatchesPerWake posts, leaving the rest for the next
-// wake; this wake's reading is then buffered after them, keeping the order.
+// a post that fails part way loses nothing. A failed post (network, timeout)
+// stops the wake, as does reaching cfg.uploadMaxBatchesPerWake posts (every
+// post counts, retries too): the rest waits for the next wake, and this wake's
+// reading is then buffered after it, keeping the order.
 // A reading the server took but whose drop from flash failed is sent again
 // later: Supabase ignores a (device_id, seq, boot_count) it already has.
+//
+// A post the server refuses for its content (Uplink::lastSendRefused) is sent
+// again one buffered reading at a time, so the good ones before the bad one go
+// up. The bad one, now the oldest, gets one more refusal for this wake (kept in
+// flash in its record) and is skipped at cfg.bufferMaxRefusals. Until then it
+// is held at the front and this wake's reading goes up on its own. A refusal
+// counts only if the server took some reading this wake: if it takes nothing it
+// is refusing everything (a schema mismatch, say), and no reading is to blame.
 void uploadReadings(const Reading& reading, const CycleConfig& cfg, Ports& ports,
                     WakeResult& result) {
+  Store& store = ports.store;
   Reading batch[config::UPLOAD_BATCH_SIZE];
   const size_t batchSize =
       std::max<size_t>(std::min<size_t>(cfg.uploadBatchSize, config::UPLOAD_BATCH_SIZE), 1);
-  for (size_t posts = 0; posts < cfg.uploadMaxBatchesPerWake && !result.uploaded; ++posts) {
-    const size_t waiting = ports.store.bufferCount();
+  size_t posts = 0;
+  size_t accepted = 0;   // readings the server took this wake
+  bool refused = false;  // the last post was refused for its content
+  auto post = [&](const Reading* rs, size_t n) {
+    ++posts;
+    const bool ok = ports.uplink.sendReadings(rs, n);
+    refused = !ok && ports.uplink.lastSendRefused();
+    if (ok) {
+      accepted += n;
+      result.readingsSent += n;
+    }
+    return ok;
+  };
+  // Drops the oldest k; false (stop) when the flash didn't drop them.
+  auto dropOldest = [&](size_t k) {
+    const size_t before = store.bufferCount();
+    store.bufferDrop(k);
+    return store.bufferCount() == before - std::min(before, k);
+  };
+  auto sendReadingAlone = [&] {
+    if (!result.uploaded && posts < cfg.uploadMaxBatchesPerWake && post(&reading, 1)) {
+      result.uploaded = true;
+    }
+  };
+
+  while (posts < cfg.uploadMaxBatchesPerWake) {
+    const size_t waiting = store.bufferCount();
+    if (waiting == 0 && result.uploaded) return;
     size_t fromBuffer = 0;
     while (fromBuffer < std::min(waiting, batchSize) &&
-           ports.store.bufferPeek(fromBuffer, batch[fromBuffer])) {
+           store.bufferPeek(fromBuffer, batch[fromBuffer])) {
       ++fromBuffer;
     }
     // This wake's reading goes in once everything before it is in the post (or
     // the buffer can't be read: then it goes up on its own rather than not at all).
-    const bool withReading = fromBuffer < batchSize && (fromBuffer == waiting || fromBuffer == 0);
+    const bool withReading =
+        !result.uploaded && fromBuffer < batchSize && (fromBuffer == waiting || fromBuffer == 0);
     size_t n = fromBuffer;
     if (withReading) batch[n++] = reading;
-    if (!ports.uplink.sendReadings(batch, n)) return;
-    result.readingsSent += n;
-    result.uploaded = withReading;
-    if (fromBuffer == 0) continue;
-    ports.store.bufferDrop(fromBuffer);
-    // A failed drop leaves them at the front: stop rather than send them again now.
-    if (ports.store.bufferCount() != waiting - fromBuffer) return;
+    if (n == 0) return;
+    if (post(batch, n)) {
+      if (withReading) result.uploaded = true;
+      if (fromBuffer > 0 && !dropOldest(fromBuffer)) return;
+      continue;
+    }
+    if (!refused || fromBuffer == 0) return;  // a failure, or this wake's reading refused alone
+
+    // Find the refused one: the post's buffered readings one at a time, oldest first.
+    size_t bad = 0;
+    if (n > 1) {
+      for (; bad < fromBuffer; ++bad) {
+        if (posts >= cfg.uploadMaxBatchesPerWake) return;
+        if (!post(&batch[bad], 1)) break;
+        if (!dropOldest(1)) return;
+      }
+      if (bad == fromBuffer) continue;  // all went up: this wake's reading next, on its own
+      if (!refused) return;
+    }
+    // batch[bad] is now the oldest buffered reading, refused on its own.
+    if (accepted == 0) sendReadingAlone();  // does the server take anything?
+    if (accepted == 0) return;
+    Reading r = batch[bad];
+    if (r.uploadRefusals < UINT8_MAX) ++r.uploadRefusals;
+    if (cfg.bufferMaxRefusals > 0 && r.uploadRefusals >= cfg.bufferMaxRefusals) {
+      if (!dropOldest(1)) return;
+      ++result.bufferSkipped;
+      continue;
+    }
+    store.bufferReplaceOldest(r);  // a failed write is logged by the Store
+    sendReadingAlone();
+    return;
   }
 }
 

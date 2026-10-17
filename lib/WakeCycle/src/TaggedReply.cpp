@@ -85,6 +85,14 @@ void formatBufferLine(size_t count, size_t sent, size_t dropped, char* out, size
                 static_cast<unsigned long>(dropped));
 }
 
+void formatBufferLine(size_t count, size_t sent, size_t dropped, size_t skipped, char* out,
+                      size_t size) {
+  Appender add(out, size);
+  add("@buffer count=%lu sent=%lu dropped=%lu skipped=%lu", static_cast<unsigned long>(count),
+      static_cast<unsigned long>(sent), static_cast<unsigned long>(dropped),
+      static_cast<unsigned long>(skipped));
+}
+
 void formatClearBufLine(const CommandResult& r, char* out, size_t size) {
   if (size == 0) return;
   std::snprintf(out, size, "@clearbuf ok=%d cleared=%lu count=%lu", r.ok ? 1 : 0,

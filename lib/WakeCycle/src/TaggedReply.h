@@ -26,6 +26,10 @@ void formatUploadLine(const Reading& r, bool ok, char* out, size_t size);
 // wake's upload (count left in flash, readings the server took this wake,
 // oldest dropped because it was full), and after `status` (sent=0 dropped=0).
 void formatBufferLine(size_t count, size_t sent, size_t dropped, char* out, size_t size);
+// The same with ` skipped=<n>` added: buffered readings dropped this wake after
+// the server refused them on BUFFER_MAX_REFUSALS wakes. What the firmware prints.
+void formatBufferLine(size_t count, size_t sent, size_t dropped, size_t skipped, char* out,
+                      size_t size);
 
 // `@clearbuf ok=<0|1> cleared=<n> count=<n>` for the `clearbuf` command (#7).
 // ok=0: a flash error left count readings in the buffer.

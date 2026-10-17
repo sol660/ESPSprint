@@ -58,7 +58,12 @@ constexpr size_t BUFFER_CAPACITY = 3000;  // ~4 weeks of 15-min readings; oldest
 // a long backlog drains over a few wakes inside the 105 s upload watchdog
 // (each post is a TLS handshake plus up to ~25 rows of JSON). Not set by spec.
 constexpr size_t UPLOAD_BATCH_SIZE = 25;
-constexpr size_t UPLOAD_MAX_BATCHES_PER_WAKE = 8;
+constexpr size_t UPLOAD_MAX_BATCHES_PER_WAKE = 8;  // every post counts, also the retries below
+// A buffered reading the server refuses for its content (HTTP 4xx) on this many
+// separate wakes is dropped (logged), so one bad row can't hold up the rest
+// (#7, user decision 2026-10-17). A wake where the server took nothing at all
+// doesn't count.
+constexpr uint8_t BUFFER_MAX_REFUSALS = 3;
 // Alerts waiting for ntfy (WiFi down, ntfy refusing), kept in flash. Each
 // raised alert is delivered, oldest first; only when this many are waiting is
 // the oldest dropped (logged). Not set by spec.
