@@ -136,16 +136,18 @@ size_t encodeReadingJson(const Reading& r, const UploadHealth& h, char* out, siz
   o.key("trigger");
   o.string(triggerName(r.trigger));
   // Angles to 0.0001 deg, finer than the 0.001 deg the @read line prints.
-  o.key("pitch_d");
-  o.number("%.4f", r.pitchDeg);
-  o.key("roll_d");
-  o.number("%.4f", r.rollDeg);
-  o.key("tilt_d");
-  o.number("%.4f", r.tiltDeg);
-  o.key("pitch_raw");
-  o.number("%.4f", r.pitchRaw);
-  o.key("roll_raw");
-  o.number("%.4f", r.rollRaw);
+  // None were measured on a sensor error with no still window: null (a gap on
+  // the dashboard), also for such a reading buffered by an older build.
+  const bool noAngles = anglesMissing(r);
+  auto angle = [&](const char* k, float v) {
+    o.key(k);
+    o.number("%.4f", noAngles ? NAN : v);
+  };
+  angle("pitch_d", r.pitchDeg);
+  angle("roll_d", r.rollDeg);
+  angle("tilt_d", r.tiltDeg);
+  angle("pitch_raw", r.pitchRaw);
+  angle("roll_raw", r.rollRaw);
   o.key("temp_c");
   o.number("%.2f", r.tempC);
   o.key("noise");

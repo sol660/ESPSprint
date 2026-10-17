@@ -20,9 +20,13 @@ static CommandWindow window(WakeCause::Timer, 0, CycleConfig{});
 static WifiCommand wifiCommand;
 
 static void printReading(const Reading& r) {
-  Serial.printf("tilt delta pitch %+.3f roll %+.3f deg | raw pitch %+.3f roll %+.3f | noise %.4f g | %s\n",
+  if (anglesMissing(r)) {
+    Serial.println("tilt delta: no angle measured | UNSTABLE");
+  } else {
+    Serial.printf("tilt delta pitch %+.3f roll %+.3f deg | raw pitch %+.3f roll %+.3f | noise %.4f g | %s\n",
                 r.pitchDeg, r.rollDeg, r.pitchRaw, r.rollRaw, r.noise,
                 r.stable ? "stable" : "UNSTABLE");
+  }
   if (r.event == ReadingEvent::SensorError) {
     Serial.println("SENSOR ERROR: MPU6050 not answering on I2C, even after a bus reset");
   }

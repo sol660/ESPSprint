@@ -73,6 +73,13 @@ struct Reading {
   uint8_t uploadRefusals;
 };
 
+// A sensor error with no still window (accelG 0): pitch, roll and tilt were
+// never measured. Their fields then hold 0 minus the baseline, not an angle, so
+// the upload sends null and the replies don't report them as a reading.
+inline bool anglesMissing(const Reading& r) {
+  return r.event == ReadingEvent::SensorError && !(r.accelG > 0);
+}
+
 // A notification that the level went up (or a test message: testTag != 0).
 struct Alert {
   Level level;     // the new level (for a test: the level the device is at)

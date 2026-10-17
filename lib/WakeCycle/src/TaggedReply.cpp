@@ -1,5 +1,6 @@
 #include "TaggedReply.h"
 
+#include <cmath>
 #include <cstdarg>
 #include <cstdio>
 
@@ -8,10 +9,20 @@ namespace {
 // Appends the reading's keys; returns the new end position (clamped to size).
 size_t appendReading(const Reading& r, char* out, size_t size, size_t pos) {
   if (pos >= size) return pos;
-  const int n = std::snprintf(out + pos, size - pos,
-                              " pitch=%.3f roll=%.3f tilt=%.3f stable=%d noise=%.5f temp=%.1f g=%.4f cal=%d",
-                              r.pitchDeg, r.rollDeg, r.tiltDeg, r.stable ? 1 : 0, r.noise,
-                              r.tempC, r.accelG, r.accelCalibrated ? 1 : 0);
+  // A sensor error with no still window has no angle: `nan`, written out so it
+  // doesn't depend on how the C library prints NaN.
+  int n;
+  if (anglesMissing(r)) {
+    n = std::snprintf(out + pos, size - pos, " pitch=nan roll=nan tilt=nan");
+  } else {
+    n = std::snprintf(out + pos, size - pos, " pitch=%.3f roll=%.3f tilt=%.3f", r.pitchDeg,
+                      r.rollDeg, r.tiltDeg);
+  }
+  if (n < 0) return pos;
+  pos += static_cast<size_t>(n);
+  if (pos >= size) return pos;
+  n = std::snprintf(out + pos, size - pos, " stable=%d noise=%.5f temp=%.1f g=%.4f cal=%d",
+                    r.stable ? 1 : 0, r.noise, r.tempC, r.accelG, r.accelCalibrated ? 1 : 0);
   return n < 0 ? pos : pos + static_cast<size_t>(n);
 }
 
@@ -108,8 +119,14 @@ void formatSleepLine(uint32_t timerS, char* out, size_t size) {
 void formatAlertLine(const Alert& a, bool ok, char* out, size_t size) {
   if (size == 0) return;
   const TagText tag(a.testTag);
-  std::snprintf(out, size, "@alert ok=%d tag=%s level=%s tilt=%.3f", ok ? 1 : 0, tag.text,
-                levelName(a.level), static_cast<double>(a.tiltDeg));
+  Appender add(out, size);
+  add("@alert ok=%d tag=%s level=%s", ok ? 1 : 0, tag.text, levelName(a.level));
+  // No latest tilt (NaN) after a sensor error: `nan`, whatever the C library prints.
+  if (std::isfinite(a.tiltDeg)) {
+    add(" tilt=%.3f", static_cast<double>(a.tiltDeg));
+  } else {
+    add(" tilt=nan");
+  }
 }
 
 void formatCalReply(const CalResult& r, char* out, size_t size) {

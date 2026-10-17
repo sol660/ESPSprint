@@ -503,7 +503,7 @@ CommandResult runCommand(Command cmd, RtcState& state, const CycleConfig& cfg, P
       result.hasBaseline = ports.store.loadBaseline(result.baseline);
       result.reading = readTiltDelta(cfg, ports, result.hasBaseline, result.baseline);
       state.lastReading = result.reading;
-      result.ok = true;
+      result.ok = !anglesMissing(result.reading);  // the sensor gave no angle
       break;
     case Command::Status:
       result.hasBaseline = ports.store.loadBaseline(result.baseline);
@@ -576,7 +576,9 @@ void WifiCommand::finish(bool connected, RtcState& state, const CycleConfig& cfg
     // The level the device is at and the latest reading's tilt, so the test
     // message also shows the current state. Not saved to flash: a test that
     // fails is reported now, never retried on later wakes.
-    r.alert = Alert{state.levels.level, state.lastReading.tiltDeg, ports.clock.nowUtc(), testTag_};
+    // After a sensor error there is no latest tilt: NaN (shown as unknown).
+    const float tilt = anglesMissing(state.lastReading) ? NAN : state.lastReading.tiltDeg;
+    r.alert = Alert{state.levels.level, tilt, ports.clock.nowUtc(), testTag_};
     r.ok = true;
     r.alertTried = true;
     r.alertSent = connected && ports.uplink.sendAlert(r.alert);
