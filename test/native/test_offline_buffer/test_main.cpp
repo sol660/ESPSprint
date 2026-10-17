@@ -279,8 +279,8 @@ void test_status_shows_how_many_readings_are_buffered() {
 
 void test_buffer_and_clearbuf_lines() {
   char line[80];
-  formatBufferLine(12, 4, 1, line, sizeof line);
-  TEST_ASSERT_EQUAL_STRING("@buffer count=12 sent=4 dropped=1", line);
+  formatBufferLine(12, 4, 1, 0, line, sizeof line);
+  TEST_ASSERT_EQUAL_STRING("@buffer count=12 sent=4 dropped=1 skipped=0", line);
 
   CommandResult r;
   r.ok = true;

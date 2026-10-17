@@ -89,13 +89,6 @@ void formatUploadLine(const Reading& r, bool ok, char* out, size_t size) {
                 static_cast<unsigned long>(r.seq), static_cast<unsigned long>(r.bootCount));
 }
 
-void formatBufferLine(size_t count, size_t sent, size_t dropped, char* out, size_t size) {
-  if (size == 0) return;
-  std::snprintf(out, size, "@buffer count=%lu sent=%lu dropped=%lu",
-                static_cast<unsigned long>(count), static_cast<unsigned long>(sent),
-                static_cast<unsigned long>(dropped));
-}
-
 void formatBufferLine(size_t count, size_t sent, size_t dropped, size_t skipped, char* out,
                       size_t size) {
   Appender add(out, size);
