@@ -12,15 +12,20 @@ The product is a remote landslide/tilt monitor (school prototype). The full spec
 
 - PlatformIO CLI is **not on PATH**: use `~/.platformio/penv/Scripts/pio.exe` (Python: `~/.platformio/penv/Scripts/python.exe`).
 - Build: `pio run -e esp32dev` · Flash: `pio run -t upload` · Monitor: `pio device monitor` (115200 baud)
+- `esp32dev_hil`: the same firmware with short sleep/window timings (`ESPSPRINT_HIL_TIMINGS` in `config.h`), needed by `test/hil/board/test_sleep.py`. Flash it with `pio run -e esp32dev_hil -t upload`, then flash `esp32dev` again when done.
 - PC logic tests: `pio test -e native` (one suite: `-f native/test_<name>`). On-board hardware tests: `pio test -e esp32dev` (flashes the board).
+- Board tests (pytest, from the PC, ADR 0001): run `~/.platformio/penv/Scripts/python.exe scripts/setup_venv.py` once to set up `.venv`. Then the board suite is `.venv/Scripts/python.exe -m pytest test/hil/board` (port is found automatically, or set `ESP_PORT`; `--manual` also runs the hand tests), and the no-board harness self-check is `.venv/Scripts/python.exe -m pytest test/hil/selfcheck`. Firmware replies that tests check are tagged lines: `@tag key=value ...`, formatted in `lib/WakeCycle/src/TaggedReply.*`. Only add keys; never rename or remove them, because the board tests parse them.
+- CI (`.github/workflows/ci.yml`, Ubuntu) runs the native tests, the harness self-check, and builds `esp32dev` and `esp32dev_hil`. It copies `secrets.example.h` to `secrets.h`, so code must build with the template values.
 - The `native` env needs a complete MinGW gcc. The `gcc.exe` in `~/bin` (first on PATH) has no headers, so `scripts/native_toolchain.py` puts `~/tdm-gcc/bin` first (override with `NATIVE_GCC_BIN`).
 - Project skills in `.claude/skills/`: `pio-build`, `pio-flash` (user-invoked only), `pio-monitor`, `pio-add-lib`, `pio-test`, `esp32-module`.
 
 ## Layout
 
-- Firmware is one **wake cycle** per boot. `lib/WakeCycle/` holds `runWakeCycle()`, which has no hardware access: it gets the wake cause, `RtcState` (kept across deep sleep), `CycleConfig`, and six ports (`Ports.h`: Imu, Clock, Store, Uplink, CamTrigger, Sleeper). It returns a `WakeResult`. All decision logic belongs here, and it must not include Arduino headers.
+- Firmware is one **wake cycle** per boot. `lib/WakeCycle/` holds `runWakeCycle()`, which has no hardware access: it gets the wake cause, `RtcState` (kept across deep sleep), `CycleConfig`, and six ports (`Ports.h`: Imu, Clock, Store, Uplink, CamTrigger, Sleeper). It returns a `WakeResult`. All decision logic belongs here, and it must not include Arduino headers. Installer serial commands (`read`, `baseline`, `status`) go through the second entry point, `runCommand()`, and the accelerometer calibration (`cal <face|save|clear>`) through `runCalCommand()`; `ping <n>` (board tests) is answered in `main.cpp`. The network commands (`wifi [tag]`, `alert [n]`) run as the `WifiCommand` state machine, which `loop()` polls with `millis()` timing so it never blocks. `CommandWindow` decides when the board sleeps. `main.cpp`'s `loop()` only parses commands, polls, and prints the result.
+- Payload formatting is also hardware-free in `lib/WakeCycle/`: `ReadingJson.*` (a reading as a Supabase `readings` row) and `AlertMessage.*` (ntfy alert text). The uplink and the native tests share them, so change wire formats there, not in `Esp32Ports`.
 - `lib/Esp32Ports/` — the real port implementations. `src/main.cpp` builds them, runs one cycle and sleeps as the result says.
-- `include/config.h` — all pins and tunables (`config::`), Arduino-free. Secrets go in the git-ignored `include/secrets.h`; copy it from `include/secrets.example.h`.
+- `include/config.h` — all pins and tunables (`config::`), Arduino-free. Secrets go in the git-ignored `include/secrets.h`; copy it from `include/secrets.example.h`. The pytest board tests also read `SUPABASE_URL`, `SUPABASE_KEY`, `DEVICE_ID` and `NTFY_TOPIC` out of `secrets.h` as text, so keep each of those on one line.
+- `supabase/` — `schema.sql` (readings table + access rules) and `SETUP.md` (first-time setup checklist).
 - `test/native/test_<name>/` — PC tests at the wake-cycle seam, using the fakes in `test/native/fakes/Fakes.h`. `test/embedded/test_<name>/` — on-board tests of the real ports.
 - `docs/improvements.md` — log of changes, decisions, open questions and items still to verify on the board. Add to it when you finish a ticket.
 - `.pio/` — generated build output; never edit.

@@ -1,0 +1,2 @@
+pytest>=8,<9
+pyserial>=3.5,<4

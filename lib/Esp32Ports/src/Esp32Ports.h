@@ -1,6 +1,6 @@
 #pragma once
 
-// Real hardware behind the wake-cycle Ports. For now these are placeholders
+// Real hardware behind the wake-cycle Ports. Some are still placeholders
 // that log and report failure; later tickets fill each one in.
 
 #include <Arduino.h>
@@ -26,7 +26,11 @@ class Esp32Clock : public Clock {
   uint32_t nowUtc() override;
   bool isSynced() override;
   uint32_t uptimeMs() override;
-  bool sync() override;
+  void startSync() override;
+  Progress pollSync() override;
+
+ private:
+  uint32_t syncStartMs_ = 0;
 };
 
 class Esp32Store : public Store {
@@ -34,23 +38,46 @@ class Esp32Store : public Store {
   explicit Esp32Store(const char* ns = "espsprint") : ns_(ns) {}
   bool loadBaseline(Baseline& out) override;
   bool saveBaseline(const Baseline& b) override;
+  bool clearBaseline() override;
   bool loadCalibration(TempCalibration& out) override;
+  bool loadAccelCalibration(AccelCalibration& out) override;
+  bool saveAccelCalibration(const AccelCalibration& c) override;
+  bool clearAccelCalibration() override;
+  bool loadBootCount(uint32_t& out) override;
+  bool saveBootCount(uint32_t count) override;
   bool bufferPush(const Reading& r) override;
   size_t bufferCount() override;
   bool bufferPeek(size_t index, Reading& out) override;
   void bufferDrop(size_t count) override;
-  bool loadPendingAlert(Alert& out) override;
-  bool savePendingAlert(const Alert& a) override;
-  void clearPendingAlert() override;
+  // The alert queue: one NVS blob of up to config::ALERT_QUEUE_LEN Alerts.
+  size_t alertCount() override;
+  bool alertPeek(size_t index, Alert& out) override;
+  bool alertPush(const Alert& a) override;
+  bool alertReplaceNewest(const Alert& a) override;
+  bool alertDrop(size_t count) override;
 
  private:
   const char* ns_;  // Preferences (NVS) namespace
 };
 
+// WiFi (secrets::WIFI_NETWORKS in order: WPA2-Personal or WPA2-Enterprise PEAP)
+// + HTTPS POST to Supabase's REST API and to ntfy, with the server certificate checked
+// against RootCa.h. Self-contained so it can be swapped for other WiFi code:
+// the core only sees connect / disconnect / sendReadings / sendAlert. Joining is polled
+// with millis(), never waited on with delay().
 class Esp32Uplink : public Uplink {
  public:
+  void startConnect() override;
+  Progress pollConnect() override;
+  void disconnect() override;
   bool sendReadings(const Reading* readings, size_t count) override;
   bool sendAlert(const Alert& alert) override;
+
+ private:
+  void beginNetwork();
+  size_t network_ = 0;  // index into secrets::WIFI_NETWORKS being tried
+  size_t networks_ = 0;  // how many are tried (at most config::WIFI_MAX_NETWORKS)
+  uint32_t networkStartMs_ = 0;
 };
 
 class Esp32CamTrigger : public CamTrigger {

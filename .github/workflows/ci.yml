@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: .github/workflows/ci.yml
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+          restore-keys: pio-${{ runner.os }}-
+
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+
+      # secrets.h is git-ignored; the template keeps the build working once code includes it.
+      - name: Provide secrets.h from template
+        run: cp -n include/secrets.example.h include/secrets.h
+
+      # scripts/native_toolchain.py only prepends ~/tdm-gcc/bin when that folder
+      # exists, so on Linux the system gcc is used and PATH is left alone.
+      - name: PC logic tests (native)
+        run: pio test -e native
+
+      # No board in CI: this only proves the board-test harness fails on a silent port (ADR 0001).
+      - name: Board-test harness self-check
+        run: |
+          python scripts/setup_venv.py
+          .venv/bin/python -m pytest test/hil/selfcheck
+
+      - name: Firmware build (esp32dev)
+        run: pio run -e esp32dev
+
+      # Same firmware with short timings, for the board sleep tests (test/hil/board/test_sleep.py).
+      - name: Firmware build (esp32dev_hil)
+        run: pio run -e esp32dev_hil

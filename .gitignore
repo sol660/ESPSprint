@@ -74,3 +74,8 @@ Testing/
 
 # Real credentials (template: include/secrets.example.h)
 include/secrets.h
+
+# Board-test venv (scripts/setup_venv.py) and Python caches
+.venv/
+__pycache__/
+.pytest_cache/
