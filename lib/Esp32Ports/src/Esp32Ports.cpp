@@ -9,6 +9,7 @@
 #include <esp_sleep.h>
 #include <esp_sntp.h>
 #include <esp_wpa2.h>
+#include <sys/stat.h>
 #include <time.h>
 
 #include "AlertMessage.h"
@@ -95,12 +96,20 @@ BufferHeader emptyHeader() {
           static_cast<uint32_t>(config::BUFFER_CAPACITY), 0, 0};
 }
 
+// True when the file exists. LittleFS.exists() opens the file and logs an [E]
+// line when it isn't there, which an empty buffer hits on every wake; stat() on
+// the mounted path (LittleFS's default /littlefs) doesn't log.
+bool fsExists(const String& path) {
+  struct stat st;
+  return stat((String("/littlefs") + path).c_str(), &st) == 0;
+}
+
 // The header, or an empty one when there is none (or it is from another layout).
 bool readBufferHeader(const char* ns, BufferHeader& h) {
   h = emptyHeader();
   if (!mountFs()) return false;
   const String path = bufferPath(ns, ".bhd");
-  if (!LittleFS.exists(path)) return true;
+  if (!fsExists(path)) return true;
   File f = LittleFS.open(path, "r");
   BufferHeader stored{};
   const bool read = f && f.read(reinterpret_cast<uint8_t*>(&stored), sizeof stored) == sizeof stored;
@@ -125,7 +134,7 @@ bool writeBufferHeader(const char* ns, const BufferHeader& h) {
 
 // Size of a file, 0 when it doesn't exist. The handle is closed again.
 size_t fileSize(const String& path) {
-  if (!LittleFS.exists(path)) return 0;
+  if (!fsExists(path)) return 0;
   File f = LittleFS.open(path, "r");
   if (!f) return 0;
   const size_t size = f.size();
