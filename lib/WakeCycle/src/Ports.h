@@ -71,13 +71,18 @@ struct Reading {
   // Offline buffer only (#7), not uploaded: wakes on which the server refused
   // this reading for its content. At CycleConfig::bufferMaxRefusals it is skipped.
   uint8_t uploadRefusals;
+  // No still window was accepted, so no angle was measured: the board moved for
+  // the whole reading, or the sensor failed (set by the reading itself).
+  bool noStillWindow;
 };
 
-// A sensor error with no still window (accelG 0): pitch, roll and tilt were
-// never measured. Their fields then hold 0 minus the baseline, not an angle, so
-// the upload sends null and the replies don't report them as a reading.
+// No still window was accepted: a board that moved for the whole reading (user,
+// 2026-10-18: moving readings can't be trusted), or a sensor error (accelG 0).
+// Pitch, roll and tilt were never measured. Their fields then hold 0 minus the
+// baseline, not an angle, so the upload sends null and the replies don't
+// report them as a reading.
 inline bool anglesMissing(const Reading& r) {
-  return r.event == ReadingEvent::SensorError && !(r.accelG > 0);
+  return r.noStillWindow || (r.event == ReadingEvent::SensorError && !(r.accelG > 0));
 }
 
 // A notification that the level went up (or a test message: testTag != 0).
