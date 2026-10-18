@@ -79,6 +79,7 @@ Reading measureTilt(const CycleConfig& cfg, uint8_t windows, uint32_t timeLimitM
 
   Reading r{};
   r.stable = accepted >= windows;
+  r.noStillWindow = accepted == 0;
   // Still failing after the bus reset: the reading goes out as a sensor error
   // (any windows taken before the failure keep their angles).
   if (sensorFailed) r.event = ReadingEvent::SensorError;
@@ -506,7 +507,7 @@ CommandResult runCommand(Command cmd, RtcState& state, const CycleConfig& cfg, P
       result.hasBaseline = ports.store.loadBaseline(result.baseline);
       result.reading = readTiltDelta(cfg, ports, result.hasBaseline, result.baseline);
       state.lastReading = result.reading;
-      result.ok = !anglesMissing(result.reading);  // the sensor gave no angle
+      result.ok = !anglesMissing(result.reading);  // no still window: no angle
       break;
     case Command::Status:
       result.hasBaseline = ports.store.loadBaseline(result.baseline);

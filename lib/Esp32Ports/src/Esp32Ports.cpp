@@ -69,7 +69,7 @@ namespace {
 
 constexpr uint32_t BUFFER_MAGIC = 0x46554245;  // "EBUF"
 // Bump when Reading's layout changes: an old buffer is then started again.
-constexpr uint16_t BUFFER_LAYOUT_VERSION = 2;  // 2: Reading::uploadRefusals
+constexpr uint16_t BUFFER_LAYOUT_VERSION = 3;  // 2: Reading::uploadRefusals, 3: noStillWindow
 
 struct BufferHeader {
   uint32_t magic;
