@@ -292,7 +292,10 @@ size_t bufferReading(const Reading& r, const CycleConfig& cfg, Store& store) {
 void uploadReadings(const Reading& reading, const CycleConfig& cfg, Ports& ports,
                     WakeResult& result) {
   Store& store = ports.store;
-  Reading batch[config::UPLOAD_BATCH_SIZE];
+  // Static, not on the stack: the TLS handshake under sendReadings() needs most
+  // of the loop task's stack, and 25 readings here (~1.7 KB) overflowed it on
+  // the board. runWakeCycle() runs once per boot and never re-enters.
+  static Reading batch[config::UPLOAD_BATCH_SIZE];
   const size_t batchSize =
       std::max<size_t>(std::min<size_t>(cfg.uploadBatchSize, config::UPLOAD_BATCH_SIZE), 1);
   size_t posts = 0;

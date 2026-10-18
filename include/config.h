@@ -62,6 +62,10 @@ constexpr size_t BUFFER_CAPACITY = 3000;  // ~4 weeks of 15-min readings; oldest
 // 5 s NTP + 8 x 10 s posts + 10 s reading + 10 s ntfy = 165 s (see
 // docs/improvements.md, Open questions).
 constexpr size_t UPLOAD_BATCH_SIZE = 25;
+// Stack of the Arduino loop task that runs setup()/loop() (default 8 KB). The
+// HTTPS posts verify the server's ECDSA chain on this stack; with the #7 upload
+// path on top, 8 KB overflowed (stack canary) on the board.
+constexpr size_t LOOP_TASK_STACK_BYTES = 16 * 1024;
 constexpr size_t UPLOAD_MAX_BATCHES_PER_WAKE = 8;  // every post counts, also the retries below
 // A buffered reading the server refuses for its content (HTTP 4xx) on this many
 // separate wakes is dropped (logged), so one bad row can't hold up the rest

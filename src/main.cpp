@@ -5,6 +5,9 @@
 #include "WakeCycle.h"
 #include "config.h"
 
+// More stack for setup()/loop(): the HTTPS posts run there (config.h).
+SET_LOOP_TASK_STACK_SIZE(config::LOOP_TASK_STACK_BYTES);
+
 // Survives deep sleep; zeroed on power-on.
 RTC_DATA_ATTR RtcState rtcState;
 
