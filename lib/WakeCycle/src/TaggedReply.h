@@ -22,6 +22,18 @@ void formatBootLine(const BootInfo& b, char* out, size_t size);
 // ok=0 means the reading was dropped (no buffer in the first build).
 void formatUploadLine(const Reading& r, bool ok, char* out, size_t size);
 
+// `@buffer count=<n> sent=<n> dropped=<n> skipped=<n>` (#7): the offline buffer
+// after a wake's upload (count left in flash, readings the server took this
+// wake, oldest dropped because it was full, buffered readings dropped after the
+// server refused them on BUFFER_MAX_REFUSALS wakes), and after `status` (the
+// last three 0).
+void formatBufferLine(size_t count, size_t sent, size_t dropped, size_t skipped, char* out,
+                      size_t size);
+
+// `@clearbuf ok=<0|1> cleared=<n> count=<n>` for the `clearbuf` command (#7).
+// ok=0: a flash error left count readings in the buffer.
+void formatClearBufLine(const CommandResult& r, char* out, size_t size);
+
 // `@sleep s=<seconds>`, printed just before deep sleep with the timer wake set.
 void formatSleepLine(uint32_t timerS, char* out, size_t size);
 

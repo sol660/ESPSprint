@@ -79,3 +79,6 @@ include/secrets.h
 .venv/
 __pycache__/
 .pytest_cache/
+
+# Dashboard config with the real Supabase values (template: dashboard/config.example.js)
+dashboard/config.js

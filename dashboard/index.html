@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Slope Monitor</title>
+  <meta name="description" content="Tilt, temperature and alerts from the landslide monitor.">
+  <!-- Scripts only from this site and the two pinned CDN files; data only from Supabase. -->
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline'; connect-src 'self' https://*.supabase.co; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+  <meta name="referrer" content="no-referrer">
+  <meta name="theme-color" content="#14532d">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Slope">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <h1>Slope monitor</h1>
+    <span id="device" class="device"></span>
+  </header>
+
+  <main>
+    <div id="offline" class="offline" hidden role="alert"></div>
+    <div id="message" class="message" hidden></div>
+
+    <section class="card status" aria-labelledby="status-h">
+      <h2 id="status-h" class="visually-hidden">Current status</h2>
+      <div id="level" class="level level-unknown">–</div>
+      <dl class="facts">
+        <div><dt>Last reading</dt><dd id="last-time">–</dd></div>
+        <div><dt>Tilt delta</dt><dd id="last-tilt">–</dd></div>
+        <div><dt>Pitch / roll</dt><dd id="last-pr">–</dd></div>
+        <div><dt>Temperature</dt><dd id="last-temp">–</dd></div>
+      </dl>
+    </section>
+
+    <section class="card" aria-labelledby="tilt-h">
+      <h2 id="tilt-h">Tilt delta (°)</h2>
+      <div class="chart"><canvas id="tilt-chart" aria-label="Tilt delta chart with WATCH and ALERT lines" role="img"></canvas></div>
+    </section>
+
+    <section class="card" aria-labelledby="temp-h">
+      <h2 id="temp-h">Temperature (°C)</h2>
+      <div class="chart small"><canvas id="temp-chart" aria-label="Temperature chart" role="img"></canvas></div>
+    </section>
+
+    <section class="card" aria-labelledby="events-h">
+      <h2 id="events-h">Events</h2>
+      <ol id="events" class="events"></ol>
+      <p id="no-events" class="muted" hidden>No level changes, shocks or sensor errors in the loaded readings.</p>
+    </section>
+
+    <p class="muted foot">Updated <span id="updated">–</span> · <button id="refresh" type="button">Refresh</button></p>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"
+          integrity="sha384-0w2KAL2YHP6wKOkUDzkCDGgVvfmHnj02DHeQ6XcHOgTfFsGyonKOpShMH1x6nk9o"
+          crossorigin="anonymous"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"
+          integrity="sha384-bs/nf9FbdNouRbMiFcrcZfLXYPKiPaGVGplVbv7dLGECccEXDW+S3zjqSKR5ZEaD"
+          crossorigin="anonymous"></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

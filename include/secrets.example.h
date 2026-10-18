@@ -4,7 +4,8 @@
 // Copy this file to include/secrets.h and fill in real values
 // (supabase/SETUP.md says where to find the Supabase ones).
 // The board tests on the PC (test/hil) read SUPABASE_URL, SUPABASE_KEY,
-// DEVICE_ID and NTFY_TOPIC from include/secrets.h too, so keep each on one line as below.
+// DEVICE_TOKEN, DEVICE_ID and NTFY_TOPIC from include/secrets.h too, so keep
+// each on one line as below.
 
 #include <cstddef>
 
@@ -45,6 +46,12 @@ constexpr size_t WIFI_NETWORK_COUNT = sizeof(WIFI_NETWORKS) / sizeof(WIFI_NETWOR
 // Never the service_role / secret key: it bypasses those rules.
 constexpr const char* SUPABASE_URL = "https://your-project.supabase.co";
 constexpr const char* SUPABASE_KEY = "your-anon-or-publishable-key";
+
+// This device's secret token (#24), sent as the `x-device-token` header on every
+// insert. Supabase only takes a reading whose device_id has this token's SHA-256
+// hash stored (supabase/SETUP.md says how to make one). The public key alone,
+// which the dashboard shows to everyone, can no longer insert.
+constexpr const char* DEVICE_TOKEN = "your-device-token";
 
 // ntfy topic for alerts (ntfy.sh). Hard to guess: anyone who knows it can read or
 // post alerts. Subscribe to it in the ntfy app (Android / iPhone).

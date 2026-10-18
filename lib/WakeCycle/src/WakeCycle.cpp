@@ -57,10 +57,20 @@ Reading measureTilt(const CycleConfig& cfg, uint8_t windows, uint32_t timeLimitM
   double sum[3] = {0, 0, 0};
   double noiseSum = 0;
   int accepted = 0;
+  bool retried = false;
+  bool sensorFailed = false;
   Window w;
-  while (accepted < windows &&
-         clock.uptimeMs() - startMs < timeLimitMs &&
-         readWindow(imu, cfg.windowSamples, cal, w)) {
+  while (accepted < windows && clock.uptimeMs() - startMs < timeLimitMs) {
+    if (!readWindow(imu, cfg.windowSamples, cal, w)) {
+      // The MPU6050 stopped answering (#7): reset the I2C bus and try once
+      // more. The window it broke off is thrown away.
+      if (!retried) {
+        retried = true;
+        if (imu.resetBus()) continue;
+      }
+      sensorFailed = true;
+      break;
+    }
     if (w.maxAccelStdG > cfg.stillAccelStdG || w.maxGyroStdDps > cfg.stillGyroStdDps) continue;
     for (int k = 0; k < 3; ++k) sum[k] += w.mean[k];
     noiseSum += w.maxAccelStdG;
@@ -69,6 +79,9 @@ Reading measureTilt(const CycleConfig& cfg, uint8_t windows, uint32_t timeLimitM
 
   Reading r{};
   r.stable = accepted >= windows;
+  // Still failing after the bus reset: the reading goes out as a sensor error
+  // (any windows taken before the failure keep their angles).
+  if (sensorFailed) r.event = ReadingEvent::SensorError;
   r.accelCalibrated = cal != nullptr;
   if (meanOut) {
     for (int k = 0; k < 3; ++k) meanOut[k] = accepted > 0 ? sum[k] / accepted : 0;
@@ -246,6 +259,116 @@ void sendQueuedAlerts(RtcState& s, Ports& ports, WakeResult& result) {
                           : static_cast<uint8_t>(std::min<size_t>(delivered, UINT8_MAX));
 }
 
+// Keeps a reading that didn't reach the server in the offline buffer (#7). When
+// the buffer is full the oldest readings make room. Returns how many were dropped.
+size_t bufferReading(const Reading& r, const CycleConfig& cfg, Store& store) {
+  const size_t count = store.bufferCount();
+  size_t dropped = 0;
+  if (count >= cfg.bufferCapacity) {
+    dropped = count - cfg.bufferCapacity + 1;
+    store.bufferDrop(dropped);
+  }
+  store.bufferPush(r);  // a failed save is logged by the Store
+  return dropped;
+}
+
+// Sends the offline buffer, oldest first, then this wake's reading (needs the
+// uplink connected). Each post carries up to cfg.uploadBatchSize readings; the
+// buffered ones in it are dropped from flash only once the server has them, so
+// a post that fails part way loses nothing. A failed post (network, timeout)
+// stops the wake, as does reaching cfg.uploadMaxBatchesPerWake posts (every
+// post counts, retries too): the rest waits for the next wake, and this wake's
+// reading is then buffered after it, keeping the order.
+// A reading the server took but whose drop from flash failed is sent again
+// later: Supabase ignores a (device_id, seq, boot_count) it already has.
+//
+// A post the server refuses for its content (Uplink::lastSendRefused) is sent
+// again one buffered reading at a time, so the good ones before the bad one go
+// up. The bad one, now the oldest, gets one more refusal for this wake (kept in
+// flash in its record) and is skipped at cfg.bufferMaxRefusals. Until then it
+// is held at the front and this wake's reading goes up on its own. A refusal
+// counts only if the server took some reading this wake: if it takes nothing it
+// is refusing everything (a schema mismatch, say), and no reading is to blame.
+void uploadReadings(const Reading& reading, const CycleConfig& cfg, Ports& ports,
+                    WakeResult& result) {
+  Store& store = ports.store;
+  Reading batch[config::UPLOAD_BATCH_SIZE];
+  const size_t batchSize =
+      std::max<size_t>(std::min<size_t>(cfg.uploadBatchSize, config::UPLOAD_BATCH_SIZE), 1);
+  size_t posts = 0;
+  size_t accepted = 0;   // readings the server took this wake
+  bool refused = false;  // the last post was refused for its content
+  auto post = [&](const Reading* rs, size_t n) {
+    ++posts;
+    const bool ok = ports.uplink.sendReadings(rs, n);
+    refused = !ok && ports.uplink.lastSendRefused();
+    if (ok) {
+      accepted += n;
+      result.readingsSent += n;
+    }
+    return ok;
+  };
+  // Drops the oldest k; false (stop) when the flash didn't drop them.
+  auto dropOldest = [&](size_t k) {
+    const size_t before = store.bufferCount();
+    store.bufferDrop(k);
+    return store.bufferCount() == before - std::min(before, k);
+  };
+  auto sendReadingAlone = [&] {
+    if (!result.uploaded && posts < cfg.uploadMaxBatchesPerWake && post(&reading, 1)) {
+      result.uploaded = true;
+    }
+  };
+
+  while (posts < cfg.uploadMaxBatchesPerWake) {
+    const size_t waiting = store.bufferCount();
+    if (waiting == 0 && result.uploaded) return;
+    size_t fromBuffer = 0;
+    while (fromBuffer < std::min(waiting, batchSize) &&
+           store.bufferPeek(fromBuffer, batch[fromBuffer])) {
+      ++fromBuffer;
+    }
+    // This wake's reading goes in once everything before it is in the post (or
+    // the buffer can't be read: then it goes up on its own rather than not at all).
+    const bool withReading =
+        !result.uploaded && fromBuffer < batchSize && (fromBuffer == waiting || fromBuffer == 0);
+    size_t n = fromBuffer;
+    if (withReading) batch[n++] = reading;
+    if (n == 0) return;
+    if (post(batch, n)) {
+      if (withReading) result.uploaded = true;
+      if (fromBuffer > 0 && !dropOldest(fromBuffer)) return;
+      continue;
+    }
+    if (!refused || fromBuffer == 0) return;  // a failure, or this wake's reading refused alone
+
+    // Find the refused one: the post's buffered readings one at a time, oldest first.
+    size_t bad = 0;
+    if (n > 1) {
+      for (; bad < fromBuffer; ++bad) {
+        if (posts >= cfg.uploadMaxBatchesPerWake) return;
+        if (!post(&batch[bad], 1)) break;
+        if (!dropOldest(1)) return;
+      }
+      if (bad == fromBuffer) continue;  // all went up: this wake's reading next, on its own
+      if (!refused) return;
+    }
+    // batch[bad] is now the oldest buffered reading, refused on its own.
+    if (accepted == 0) sendReadingAlone();  // does the server take anything?
+    if (accepted == 0) return;
+    Reading r = batch[bad];
+    if (r.uploadRefusals < UINT8_MAX) ++r.uploadRefusals;
+    if (cfg.bufferMaxRefusals > 0 && r.uploadRefusals >= cfg.bufferMaxRefusals) {
+      if (!dropOldest(1)) return;
+      ++result.bufferSkipped;
+      continue;
+    }
+    store.bufferReplaceOldest(r);  // a failed write is logged by the Store
+    sendReadingAlone();
+    return;
+  }
+}
+
 }  // namespace
 
 bool isColdBoot(WakeCause cause) {
@@ -328,16 +451,21 @@ WakeResult runWakeCycle(WakeCause cause, RtcState& state, const CycleConfig& cfg
       result.alertSent = ports.uplink.sendAlert(raisedAlert);
       if (result.alertSent) ++result.alertsSent;
     }
-    result.uploaded = ports.uplink.sendReadings(&reading, 1);
+    uploadReadings(reading, cfg, ports, result);
   }
   ports.uplink.disconnect();
-  result.readingsSent = result.uploaded ? 1 : 0;
+  if (!result.uploaded && cfg.bufferCapacity > 0) {
+    result.bufferDropped = bufferReading(reading, cfg, ports.store);
+  }
+  result.readingsBuffered = ports.store.bufferCount();
 
   state.lastReading = reading;
   // Never a 0 s timer: the board must always wake again.
   result.nextWakeS = std::max<uint32_t>(cfg.normalIntervalS, 1);
   return result;
 }
+
+CycleConfig deviceCycleConfig() { return CycleConfig{}; }
 
 CommandWindow::CommandWindow(WakeCause cause, uint32_t nowMs, const CycleConfig& cfg)
     : fromMs_(nowMs), forMs_(cfg.commandWindowMs), idleMs_(cfg.sessionIdleMs) {
@@ -375,14 +503,23 @@ CommandResult runCommand(Command cmd, RtcState& state, const CycleConfig& cfg, P
       result.hasBaseline = ports.store.loadBaseline(result.baseline);
       result.reading = readTiltDelta(cfg, ports, result.hasBaseline, result.baseline);
       state.lastReading = result.reading;
-      result.ok = true;
+      result.ok = !anglesMissing(result.reading);  // the sensor gave no angle
       break;
     case Command::Status:
       result.hasBaseline = ports.store.loadBaseline(result.baseline);
       result.hasAccelCalibration = ports.store.loadAccelCalibration(result.accelCalibration);
       result.reading = state.lastReading;
+      result.bufferCount = ports.store.bufferCount();
       result.ok = true;
       break;
+    case Command::ClearBuf: {
+      const size_t before = ports.store.bufferCount();
+      ports.store.bufferDrop(before);
+      result.bufferCount = ports.store.bufferCount();
+      result.bufferCleared = before - std::min(before, result.bufferCount);
+      result.ok = result.bufferCount == 0;
+      break;
+    }
     case Command::Wifi:
     case Command::Alert: {
       WifiCommand wifi;
@@ -439,7 +576,9 @@ void WifiCommand::finish(bool connected, RtcState& state, const CycleConfig& cfg
     // The level the device is at and the latest reading's tilt, so the test
     // message also shows the current state. Not saved to flash: a test that
     // fails is reported now, never retried on later wakes.
-    r.alert = Alert{state.levels.level, state.lastReading.tiltDeg, ports.clock.nowUtc(), testTag_};
+    // After a sensor error there is no latest tilt: NaN (shown as unknown).
+    const float tilt = anglesMissing(state.lastReading) ? NAN : state.lastReading.tiltDeg;
+    r.alert = Alert{state.levels.level, tilt, ports.clock.nowUtc(), testTag_};
     r.ok = true;
     r.alertTried = true;
     r.alertSent = connected && ports.uplink.sendAlert(r.alert);

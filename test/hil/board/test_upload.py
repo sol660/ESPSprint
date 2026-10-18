@@ -89,7 +89,7 @@ def test_device_key_can_insert_but_not_update_or_delete(supabase):
     """Story 43: a leaked device key can't change or delete data. Needs no board."""
     tag = harness.random_id()
     row = {
-        "device_id": "hil-key-check", "seq": int(tag), "boot_count": 0,
+        "device_id": supabase.device_id, "seq": int(tag), "boot_count": 0,
         "ts": datetime.now(timezone.utc).isoformat(), "time_synced": True,
         "trigger": "scheduled", "pitch_d": 0.0, "roll_d": 0.0, "tilt_d": 0.0,
         "pitch_raw": 0.0, "roll_raw": 0.0, "temp_c": 20.0, "noise": 0.001,

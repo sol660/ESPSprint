@@ -68,7 +68,17 @@ struct Reading {
   ReadingEvent event;
   uint32_t testTag;  // 0 = a real reading; else the `wifi` command's tag (Supabase test_tag)
   bool accelCalibrated;  // the samples were corrected with a stored AccelCalibration
+  // Offline buffer only (#7), not uploaded: wakes on which the server refused
+  // this reading for its content. At CycleConfig::bufferMaxRefusals it is skipped.
+  uint8_t uploadRefusals;
 };
+
+// A sensor error with no still window (accelG 0): pitch, roll and tilt were
+// never measured. Their fields then hold 0 minus the baseline, not an angle, so
+// the upload sends null and the replies don't report them as a reading.
+inline bool anglesMissing(const Reading& r) {
+  return r.event == ReadingEvent::SensorError && !(r.accelG > 0);
+}
 
 // A notification that the level went up (or a test message: testTag != 0).
 struct Alert {
@@ -137,6 +147,9 @@ class Store {
   virtual size_t bufferCount() = 0;
   virtual bool bufferPeek(size_t index, Reading& out) = 0;  // 0 = oldest
   virtual void bufferDrop(size_t count) = 0;                // drops the oldest
+  // Rewrites the oldest buffered reading in place (its refusal count, #7).
+  // False when it can't: the count is then not kept (the reading is only tried more often).
+  virtual bool bufferReplaceOldest(const Reading&) { return false; }
   // Alerts waiting for ntfy, oldest first, kept in flash so a WiFi failure or
   // a crash can't swallow one. The wake cycle keeps it to
   // CycleConfig::alertQueueLen (config::ALERT_QUEUE_LEN).
@@ -177,6 +190,11 @@ class Uplink {
   virtual void disconnect() = 0;
   // Needs connect() first. True only if the server stored every reading.
   virtual bool sendReadings(const Reading* readings, size_t count) = 0;
+  // After a sendReadings() that returned false: true when the server answered
+  // and refused the readings themselves (HTTP 400, 409, 413, 422), false for a
+  // network, timeout, auth or server-side failure. One bad reading refuses a
+  // whole post (#7).
+  virtual bool lastSendRefused() { return false; }
   virtual bool sendAlert(const Alert& alert) = 0;
 };
 

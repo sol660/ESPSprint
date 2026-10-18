@@ -84,7 +84,16 @@ struct CycleConfig {
   float calScaleMin = config::CAL_SCALE_MIN;
   float calScaleMax = config::CAL_SCALE_MAX;
   float calOffsetMaxG = config::CAL_OFFSET_MAX_G;
+  // Offline buffer (#7): readings kept in flash while uploads fail; when full
+  // the oldest are dropped. 0 = no buffer (a failed upload drops the reading).
+  size_t bufferCapacity = config::BUFFER_CAPACITY;
+  size_t uploadBatchSize = config::UPLOAD_BATCH_SIZE;  // at most config::UPLOAD_BATCH_SIZE
+  size_t uploadMaxBatchesPerWake = config::UPLOAD_MAX_BATCHES_PER_WAKE;
+  uint8_t bufferMaxRefusals = config::BUFFER_MAX_REFUSALS;  // 0 = never skip
 };
+
+// The configuration the device runs with: CycleConfig's defaults.
+CycleConfig deviceCycleConfig();
 
 // When an awake board may go to sleep (spec #14 "Command window and sleep").
 // The serial adapter opens it once the boot's wake cycle is done, reports each
@@ -114,9 +123,14 @@ struct WakeResult {
   bool tookReading = false;
   Reading reading{};
   Level level = Level::Ok;
-  size_t readingsSent = 0;
+  size_t readingsSent = 0;   // this wake's reading and buffered ones the server took
   bool uploadTried = false;  // print `@upload ok=` when set
-  bool uploaded = false;     // false: the reading was dropped (no buffer yet)
+  // This wake's reading reached the server. false: it was kept in the offline
+  // buffer (or dropped, when CycleConfig::bufferCapacity is 0).
+  bool uploaded = false;
+  size_t readingsBuffered = 0;  // readings in the offline buffer after this wake
+  size_t bufferDropped = 0;     // oldest buffered readings dropped because it was full (log them)
+  size_t bufferSkipped = 0;     // buffered readings dropped after bufferMaxRefusals refusals (log them)
   bool alertTried = false;  // a notification was due (new or pending): print `@alert ok=`
   bool alertSent = false;   // ntfy took every waiting one; false: the rest stay in flash for the next wake
   size_t alertsSent = 0;    // how many ntfy took this wake, oldest first
@@ -137,7 +151,8 @@ WakeResult runWakeCycle(WakeCause cause, RtcState& state, const CycleConfig& cfg
 // and "TEST — not a real alert" (spec #14 story 52). No reading, no upload; a
 // test that fails is reported, never kept for retry.
 // No other command uses WiFi.
-enum class Command : uint8_t { Read, Baseline, Status, Wifi, Alert };
+// ClearBuf (`clearbuf`, #7): empties the offline buffer, e.g. after testing.
+enum class Command : uint8_t { Read, Baseline, Status, Wifi, Alert, ClearBuf };
 
 struct CommandResult {
   bool ok = false;
@@ -151,6 +166,8 @@ struct CommandResult {
   Alert alert{};
   bool hasAccelCalibration = false;  // `status`: the calibration stored in flash
   AccelCalibration accelCalibration{};
+  size_t bufferCount = 0;    // `status`, `clearbuf`: readings in the offline buffer (afterwards)
+  size_t bufferCleared = 0;  // `clearbuf`: how many it removed
 };
 
 // testTag is used by Command::Wifi and Command::Alert only (non-zero). Those

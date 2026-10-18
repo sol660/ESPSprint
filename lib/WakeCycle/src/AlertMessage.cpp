@@ -1,5 +1,6 @@
 #include "AlertMessage.h"
 
+#include <cmath>
 #include <cstdio>
 
 #include "ReadingJson.h"
@@ -24,13 +25,18 @@ void formatAlertMessage(const Alert& a, const char* deviceId, char* out, size_t 
   char time[48];
   formatTime(a.ts, time, sizeof time);
   if (isTestTag(a.testTag)) {
+    // No latest tilt (NaN) after a sensor error.
+    char tilt[24] = "unknown";
+    if (std::isfinite(a.tiltDeg)) {
+      std::snprintf(tilt, sizeof tilt, "%.2f deg", static_cast<double>(a.tiltDeg));
+    }
     std::snprintf(out, size,
                   "%s\n"
                   "Test number %lu from %s\n"
-                  "Current level %s, tilt delta %.2f deg\n"
+                  "Current level %s, tilt delta %s\n"
                   "%s",
                   TEST_ALERT_DISCLAIMER, static_cast<unsigned long>(a.testTag), deviceId,
-                  levelName(a.level), static_cast<double>(a.tiltDeg), time);
+                  levelName(a.level), tilt, time);
   } else {
     std::snprintf(out, size,
                   "Level %s at %s\n"

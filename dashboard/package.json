@@ -1,0 +1,9 @@
+{
+  "name": "espsprint-dashboard",
+  "private": true,
+  "type": "module",
+  "description": "Static dashboard page. Nothing to install; tests use Node's built-in runner.",
+  "scripts": {
+    "test": "node --test test/"
+  }
+}
